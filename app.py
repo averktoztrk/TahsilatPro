@@ -1400,12 +1400,15 @@ if menu == "Dosya Arama & Çalışma Masası":
     elif aktif_filtre == "Bekleyen":
         query += " AND kesinlesme_durumu = 0 AND itiraz_edildi = 0"
     elif aktif_filtre == "Kapalı":
-        query += " AND (durum LIKE '%Kapatıldı%' OR durum LIKE '%İnfaz%' OR durum LIKE '%Kapalı%')"
+        query += " AND (durum LIKE ? OR durum LIKE ? OR durum LIKE ?)"
+        params.extend(["%Kapatıldı%", "%İnfaz%", "%Kapalı%"])
     
     if ara_durum == "Açık / Derdest Dosyalar":
-        query += " AND (durum IS NULL OR (durum NOT LIKE '%Kapatıldı%' AND durum NOT LIKE '%İnfaz%' AND durum NOT LIKE '%Kapalı%'))"
+        query += " AND (durum IS NULL OR (durum NOT LIKE ? AND durum NOT LIKE ? AND durum NOT LIKE ?))"
+        params.extend(["%Kapatıldı%", "%İnfaz%", "%Kapalı%"])
     elif ara_durum == "Kapatıldı / İnfaz":
-        query += " AND (durum LIKE '%Kapatıldı%' OR durum LIKE '%İnfaz%' OR durum LIKE '%Kapalı%')"
+        query += " AND (durum LIKE ? OR durum LIKE ? OR durum LIKE ?)"
+        params.extend(["%Kapatıldı%", "%İnfaz%", "%Kapalı%"])
     elif ara_durum != "Tümü":
         query += " AND durum = ?"
         params.append(ara_durum)
@@ -1431,7 +1434,7 @@ if menu == "Dosya Arama & Çalışma Masası":
 
     query += " ORDER BY id DESC"
 
-    df = pd.read_sql_query(query, conn, params=params)
+    df = pd.read_sql_query(query, conn, params=params if params else None)
 
     if not df.empty:
         if "takip_turu" not in df.columns:

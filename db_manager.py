@@ -53,9 +53,17 @@ class PostgresCursorWrapper:
         # Convert SQLite autoincrement syntax
         clean_sql = re.sub(r"(?i)INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT", "SERIAL PRIMARY KEY", clean_sql)
 
-        # Convert ? to %s for parameters
+        # Normalize empty sequence to None so psycopg2 doesn't expect parameters
+        if params is not None and len(params) == 0:
+            params = None
+
+        # Convert ? to %s for parameters safely:
         if params is not None:
+            # Escape literal '%' to '%%' in the original SQL so psycopg2 does not confuse them with format specifiers
+            clean_sql = clean_sql.replace("%", "%%")
             clean_sql = clean_sql.replace("?", "%s")
+            if isinstance(params, list):
+                params = tuple(params)
 
         # Auto-append RETURNING id for single INSERT statements to support cursor.lastrowid
         is_insert = clean_sql.upper().startswith("INSERT INTO")
