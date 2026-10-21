@@ -4,6 +4,7 @@ import sqlite3
 from datetime import date, datetime
 import io
 import os
+import re
 import hashlib
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
