@@ -38,7 +38,7 @@ UDF_IL_ILCE = {
     "Hatay": ["Merkez", "Altınözü", "Antakya", "Arsuz", "Belen", "Defne", "Dörtyol", "Erzin", "Hassa", "İskenderun", "Kırıkhan", "Kumlu", "Payas", "Reyhanlı", "Samandağ", "Yayladağı"],
     "Isparta": ["Merkez", "Aksu", "Atabey", "Eğirdir", "Gelendost", "Gönen", "Keçiborlu", "Senirkent", "Sütçüler", "Şarkikaraağaç", "Uluborlu", "Yalvaç", "Yenişarbademli"],
     "Mersin": ["Merkez", "Akdeniz", "Anamur", "Aydıncık", "Bozyazı", "Çamlıyayla", "Erdemli", "Gülnar", "Mezitli", "Mut", "Silifke", "Tarsus", "Toroslar"],
-    "İstanbul": ["Merkez", "Adalar", "Arnavutköy", "Ataşehir", "Avcılar", "Bağcılar", "Bahçelievler", "Bakırköy", "Başakşehir", "Bayrampaşa", "Beşiktaş", "Beykoz", "Beylikdüzü", "Beyoğlu", "Büyükçekmece", "Çatalca", "Çekmeköy", "Esenler", "Esenyurt", "Eyüpsultan", "Fatih", "Gaziosmanpaşa", "Güngören", "Kadıköy", "Kağıthane", "Kartal", "Küçükçekmece", "Maltepe", "Pendik", "Sancaktepe", "Sarıyer", "Silivri", "Sultanbeyli", "Sultangazi", "Şile", "Şişli", "Tuzla", "Ümraniye", "Üsküdar", "Zeytinburnu"],
+    "İstanbul": ["Çağlayan", "Anadolu", "Bakırköy", "Büyükçekmece", "Küçükçekmece", "Gaziosmanpaşa", "Beykoz", "Silivri", "Çatalca", "Şile", "Merkez", "Adalar", "Arnavutköy", "Ataşehir", "Avcılar", "Bağcılar", "Bahçelievler", "Başakşehir", "Bayrampaşa", "Beşiktaş", "Beylikdüzü", "Beyoğlu", "Çekmeköy", "Esenler", "Esenyurt", "Eyüpsultan", "Fatih", "Güngören", "Kadıköy", "Kağıthane", "Kartal", "Maltepe", "Pendik", "Sancaktepe", "Sarıyer", "Sultanbeyli", "Sultangazi", "Şişli", "Tuzla", "Ümraniye", "Üsküdar", "Zeytinburnu"],
     "İzmir": ["Merkez", "Aliağa", "Balçova", "Bayındır", "Bayraklı", "Bergama", "Beydağ", "Bornova", "Buca", "Çeşme", "Çiğli", "Dikili", "Foça", "Gaziemir", "Güzelbahçe", "Karabağlar", "Karaburun", "Karşıyaka", "Kemalpaşa", "Kınık", "Kiraz", "Konak", "Menderes", "Menemen", "Narlıdere", "Ödemiş", "Seferihisar", "Selçuk", "Tire", "Torbalı", "Urla"],
     "Kars": ["Merkez", "Akyaka", "Arpaçay", "Digor", "Kağızman", "Sarıkamış", "Selim", "Susuz"],
     "Kastamonu": ["Merkez", "Abana", "Ağlı", "Araç", "Bozkurt", "Cide", "Çatalzeytin", "Daday", "Devrekani", "Doğanyurt", "Hanönü", "İhsangazi", "İnebolu", "Küre", "Pınarbaşı", "Seydiler", "Şenpazar", "Taşköprü", "Tosya"],
@@ -170,15 +170,23 @@ def extract_udf_xml_and_date(file_bytes_or_path, filename=""):
 
 def find_location_match(search_text):
     text_low = tr_lower(search_text)
-    # 1. Önce ilçeleri tara (Merkez hariç)
+    # Özel İstanbul İcra Adliyeleri Tespiti (Anadolu vs Çağlayan)
+    if "anadolu" in text_low:
+        return "İstanbul", "Anadolu"
+    if "çağlayan" in text_low or "caglayan" in text_low:
+        return "İstanbul", "Çağlayan"
+
+    # 1. Önce ilçeleri tara (Merkez, Çağlayan, Anadolu hariç)
     for il_ad, ilceler in UDF_IL_ILCE.items():
         for ilce_ad in ilceler:
-            if ilce_ad.lower() != "merkez":
+            if ilce_ad.lower() not in ["merkez", "çağlayan", "anadolu"]:
                 if re.search(r'\b' + re.escape(tr_lower(ilce_ad)) + r'\b', text_low):
                     return il_ad, ilce_ad
     # 2. İlleri tara
     for il_ad in UDF_IL_ILCE.keys():
         if re.search(r'\b' + re.escape(tr_lower(il_ad)) + r'\b', text_low):
+            if il_ad == "İstanbul":
+                return "İstanbul", "Çağlayan"
             return il_ad, "Merkez"
     return "İzmir", "Merkez"
 
