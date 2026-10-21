@@ -1,0 +1,23 @@
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary or local binaries
+ngrok.exe
+
+# Local database file
+tahsilat_pro.db
+
+# Streamlit local secrets & configs (optional local override)
+.streamlit/secrets.toml
+
+# Scratch files
+test_*.py
+scratch/
+migrate_to_supabase.py

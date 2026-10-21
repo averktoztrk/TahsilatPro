@@ -1,0 +1,91 @@
+{
+  "versiyon": "2026.10.15",
+  "son_guncelleme": "2026-10-15",
+  "aciklama": "Jus Hukuk Resmi Faiz Cetveli Master Veritabanı",
+  "oranlar": [
+    {
+      "faiz_turu": "Ticari Avans Faizi",
+      "baslangic_tarihi": "2000-01-01",
+      "bitis_tarihi": "2023-08-31",
+      "oran": 9.75,
+      "aciklama": "TCMB Avans Faizi"
+    },
+    {
+      "faiz_turu": "Ticari Avans Faizi",
+      "baslangic_tarihi": "2023-09-01",
+      "bitis_tarihi": "2023-12-22",
+      "oran": 35.75,
+      "aciklama": "TCMB Avans Faizi"
+    },
+    {
+      "faiz_turu": "Ticari Avans Faizi",
+      "baslangic_tarihi": "2023-12-23",
+      "bitis_tarihi": "2024-03-31",
+      "oran": 44.25,
+      "aciklama": "TCMB Avans Faizi"
+    },
+    {
+      "faiz_turu": "Ticari Avans Faizi",
+      "baslangic_tarihi": "2024-04-01",
+      "bitis_tarihi": "2099-12-31",
+      "oran": 48.00,
+      "aciklama": "TCMB Avans Faizi (Güncel)"
+    },
+    {
+      "faiz_turu": "Reeskont Faizi",
+      "baslangic_tarihi": "2000-01-01",
+      "bitis_tarihi": "2023-08-31",
+      "oran": 8.75,
+      "aciklama": "TCMB Reeskont İskonto Faizi"
+    },
+    {
+      "faiz_turu": "Reeskont Faizi",
+      "baslangic_tarihi": "2023-09-01",
+      "bitis_tarihi": "2023-12-22",
+      "oran": 34.75,
+      "aciklama": "TCMB Reeskont İskonto Faizi"
+    },
+    {
+      "faiz_turu": "Reeskont Faizi",
+      "baslangic_tarihi": "2023-12-23",
+      "bitis_tarihi": "2024-03-31",
+      "oran": 43.25,
+      "aciklama": "TCMB Reeskont İskonto Faizi"
+    },
+    {
+      "faiz_turu": "Reeskont Faizi",
+      "baslangic_tarihi": "2024-04-01",
+      "bitis_tarihi": "2099-12-31",
+      "oran": 39.75,
+      "aciklama": "TCMB Reeskont İskonto Faizi (Güncel)"
+    },
+    {
+      "faiz_turu": "Yasal Faiz",
+      "baslangic_tarihi": "2000-01-01",
+      "bitis_tarihi": "2005-12-31",
+      "oran": 12.00,
+      "aciklama": "3095 Sayılı Kanun m. 1"
+    },
+    {
+      "faiz_turu": "Yasal Faiz",
+      "baslangic_tarihi": "2006-01-01",
+      "bitis_tarihi": "2024-05-31",
+      "oran": 9.00,
+      "aciklama": "3095 Sayılı Kanun m. 1"
+    },
+    {
+      "faiz_turu": "Yasal Faiz",
+      "baslangic_tarihi": "2024-06-01",
+      "bitis_tarihi": "2026-07-30",
+      "oran": 24.00,
+      "aciklama": "3095 Sayılı Kanun (21.05.2024 C.B. Kararı: 8485)"
+    },
+    {
+      "faiz_turu": "Yasal Faiz",
+      "baslangic_tarihi": "2026-07-31",
+      "bitis_tarihi": "2099-12-31",
+      "oran": 31.00,
+      "aciklama": "3095 s.K. m. 1 (7589 s.K. 10. md - Güncel %31)"
+    }
+  ]
+}
