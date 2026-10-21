@@ -969,7 +969,7 @@ CEZAEVI_HARCI_SECENEKLERI = {
     "Cezaevi Harcından Muaf (%0.00)": 0.0
 }
 
-from db_manager import conn, cursor, IntegrityError
+from db_manager import conn, cursor, IntegrityError, DB_STATUS, DB_ERROR, IS_POSTGRES
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS taraflar (
@@ -1151,11 +1151,17 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown(f"""
-        <div style="padding: 10px; background-color: {card_bg}; border: 1.5px solid {accent_green}; border-radius: 8px; margin-bottom: 15px; font-size: 12px; text-align: center;">
+        <div style="padding: 10px; background-color: {card_bg}; border: 1.5px solid {accent_green}; border-radius: 8px; margin-bottom: 10px; font-size: 12px; text-align: center;">
             <span style="color: {text_muted};">Aktif Kullanıcı:</span><br>
             <strong style="color: {accent_green}; font-size: 13.5px;">👤 {st.session_state.get('current_user', 'Kullanıcı')}</strong>
         </div>
+        <div style="font-size: 11px; text-align: center; color: {text_muted}; margin-bottom: 12px;">
+            {DB_STATUS}
+        </div>
     """, unsafe_allow_html=True)
+
+    if DB_ERROR:
+        st.error(f"⚠️ {DB_ERROR}")
 
     menu = st.radio(
         "NAVİGASYON",

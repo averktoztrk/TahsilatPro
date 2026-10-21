@@ -24,11 +24,11 @@ except Exception:
 if not DATABASE_URL:
     DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# Default Supabase Connection Details
-DEFAULT_SUPABASE_URL = "postgresql://postgres.mngekqtbfbtianfhafja:Fengabes295123.@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
+# Default Supabase Connection Details (Transaction Pooler - IPv4 supported)
+DEFAULT_SUPABASE_URL = "postgresql://postgres.mngekqtbfbtianfhafja:Fengabes295123.@aws-0-eu-west-1.pooler.supabase.com:6543/postgres?sslmode=require"
 
-# Use Supabase if psycopg2 is available and either DATABASE_URL is set or DEFAULT_SUPABASE_URL is used
-USE_POSTGRES = HAS_PSYCOPG2 and (bool(DATABASE_URL) or True)
+# Use Supabase if psycopg2 is available
+USE_POSTGRES = HAS_PSYCOPG2
 ACTIVE_DB_URL = DATABASE_URL or DEFAULT_SUPABASE_URL
 
 _lock = threading.RLock()
@@ -141,7 +141,11 @@ class PostgresConnWrapper:
         self._connect()
 
     def _connect(self):
-        self._raw_conn = psycopg2.connect(self._dsn)
+        dsn = self._dsn
+        if "sslmode" not in dsn:
+            sep = "&" if "?" in dsn else "?"
+            dsn = f"{dsn}{sep}sslmode=require"
+        self._raw_conn = psycopg2.connect(dsn, connect_timeout=15)
 
     def _ensure_connected(self):
         if self._raw_conn is None or self._raw_conn.closed:
@@ -183,19 +187,29 @@ class PostgresConnWrapper:
                 return self._raw_conn.close()
 
 
+DB_STATUS = ""
+DB_ERROR = None
+IS_POSTGRES = False
+
 # Initialize singleton connection
 if USE_POSTGRES:
     try:
         conn = PostgresConnWrapper(ACTIVE_DB_URL)
         cursor = conn.cursor()
         IntegrityError = PGIntegrityError
-        print("Connected to Supabase PostgreSQL successfully.")
+        DB_STATUS = "🟢 Supabase Bulut Veritabanı Aktif"
+        IS_POSTGRES = True
+        print(f"{DB_STATUS}")
     except Exception as e:
+        DB_ERROR = str(e)
+        DB_STATUS = f"⚠️ Supabase Bağlantı Hatası: {e}"
+        IS_POSTGRES = False
         print(f"Failed to connect to Supabase: {e}. Falling back to SQLite.")
         conn = sqlite3.connect("tahsilat_pro.db", check_same_thread=False)
         cursor = conn.cursor()
         IntegrityError = sqlite3.IntegrityError
 else:
+    DB_STATUS = "🟡 Yerel SQLite (Çevrimdışı)"
     conn = sqlite3.connect("tahsilat_pro.db", check_same_thread=False)
     cursor = conn.cursor()
     IntegrityError = sqlite3.IntegrityError
