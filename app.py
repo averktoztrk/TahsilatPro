@@ -432,6 +432,7 @@ def get_faiz_default_rate(faiz_turu_str):
         return 0.0
     return 30.0
 
+@st.cache_data(ttl=600)
 def get_faiz_oranlari_list(faiz_turu_adi):
     if not faiz_turu_adi:
         return []
@@ -459,6 +460,13 @@ def get_faiz_oranlari_list(faiz_turu_adi):
             e_d = datetime.strptime(e_str, "%Y-%m-%d").date()
             liste.append((b_d, e_d, float(o)))
         return liste
+    except Exception:
+        return []
+
+@st.cache_data(ttl=60)
+def get_cached_taraflar_list():
+    try:
+        return pd.read_sql_query("SELECT ad_unvan FROM taraflar ORDER BY ad_unvan", conn)['ad_unvan'].tolist()
     except Exception:
         return []
 
@@ -1243,7 +1251,7 @@ if menu == "Dosya Arama & Çalışma Masası":
     
     st.write("")
     
-    taraflar_list = pd.read_sql_query("SELECT ad_unvan FROM taraflar ORDER BY ad_unvan", conn)['ad_unvan'].tolist()
+    taraflar_list = get_cached_taraflar_list()
     
     st.markdown(f"""
         <div class="search-card">
@@ -1342,15 +1350,28 @@ if menu == "Dosya Arama & Çalışma Masası":
 
         kalan_anaparalar, kalan_faizler, toplam_tahsilatlar, guncel_bakiyeler = [], [], [], []
         
+        file_ids = tuple(df['id'].tolist()) if len(df) > 1 else f"({df['id'].iloc[0]})"
+        all_tahsilatlar = pd.read_sql_query(f"SELECT id, dosya_id, tarih, tutar, aciklama FROM tahsilatlar WHERE dosya_id IN {file_ids} ORDER BY tarih ASC", conn)
+        all_masraflar = pd.read_sql_query(f"SELECT id, dosya_id, masraf_tutari, iade_tutari FROM masraflar WHERE dosya_id IN {file_ids}", conn)
+        all_alacak_kalemleri = pd.read_sql_query(f"SELECT id, dosya_id, kalem_adi, tutar, t_oncesi_faiz, faiz_turu, faiz_orani FROM alacak_kalemleri WHERE dosya_id IN {file_ids}", conn)
+
+        tahsilat_groups = dict(tuple(all_tahsilatlar.groupby("dosya_id"))) if not all_tahsilatlar.empty else {}
+        masraf_groups = dict(tuple(all_masraflar.groupby("dosya_id"))) if not all_masraflar.empty else {}
+        ak_groups = dict(tuple(all_alacak_kalemleri.groupby("dosya_id"))) if not all_alacak_kalemleri.empty else {}
+
+        empty_tahsilat = pd.DataFrame(columns=["id", "dosya_id", "tarih", "tutar", "aciklama"])
+        empty_masraf = pd.DataFrame(columns=["id", "dosya_id", "masraf_tutari", "iade_tutari"])
+        empty_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani"])
+
         for _, r in df.iterrows():
-            tahsilat_df = pd.read_sql_query("SELECT id, tarih, tutar, aciklama FROM tahsilatlar WHERE dosya_id = ?", conn, params=[r['id']])
-            masraf_df = pd.read_sql_query("SELECT masraf_tutari, iade_tutari FROM masraflar WHERE dosya_id = ?", conn, params=[r['id']])
+            d_id = r['id']
+            tahsilat_df = tahsilat_groups.get(d_id, empty_tahsilat)
+            masraf_df = masraf_groups.get(d_id, empty_masraf)
+            ak_df = ak_groups.get(d_id, empty_ak)
             
             toplam_m = masraf_df['masraf_tutari'].sum() if not masraf_df.empty else 0.0
             toplam_i = masraf_df['iade_tutari'].sum() if not masraf_df.empty else 0.0
             net_m = toplam_m - toplam_i
-
-            ak_df = pd.read_sql_query("SELECT kalem_adi, tutar, t_oncesi_faiz, faiz_turu, faiz_orani FROM alacak_kalemleri WHERE dosya_id = ?", conn, params=[r['id']])
 
             rem_p, rem_i, tot_pay, *_ = hesapla_kademeli_dosya_hesabi(
                 r['ana_para'], r['faiz_orani'], r['takip_tarihi'], r['t_oncesi_faiz'], tahsilat_df,
@@ -2077,18 +2098,32 @@ elif menu == "Müvekkil Portföy & Raporlama":
             toplam_borc_genel = 0
             toplam_tahsilat_genel = 0
 
-            row_p = 5
+            m_ids = tuple(m_dosyalar['id'].tolist()) if len(m_dosyalar) > 1 else f"({m_dosyalar['id'].iloc[0]})"
+            m_all_t = pd.read_sql_query(f"SELECT id, dosya_id, tarih, tutar, aciklama FROM tahsilatlar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
+            m_all_m = pd.read_sql_query(f"SELECT id, dosya_id, masraf_tutari, iade_tutari FROM masraflar WHERE dosya_id IN {m_ids}", conn)
+            m_all_n = pd.read_sql_query(f"SELECT id, dosya_id, tarih, not_icerik FROM dosya_notlari WHERE dosya_id IN {m_ids} ORDER BY tarih DESC", conn)
+            m_all_ak = pd.read_sql_query(f"SELECT id, dosya_id, kalem_adi, tutar, t_oncesi_faiz, faiz_turu, faiz_orani FROM alacak_kalemleri WHERE dosya_id IN {m_ids}", conn)
+
+            m_t_grp = dict(tuple(m_all_t.groupby("dosya_id"))) if not m_all_t.empty else {}
+            m_m_grp = dict(tuple(m_all_m.groupby("dosya_id"))) if not m_all_m.empty else {}
+            m_n_grp = dict(tuple(m_all_n.groupby("dosya_id"))) if not m_all_n.empty else {}
+            m_ak_grp = dict(tuple(m_all_ak.groupby("dosya_id"))) if not m_all_ak.empty else {}
+
+            m_emp_t = pd.DataFrame(columns=["id", "dosya_id", "tarih", "tutar", "aciklama"])
+            m_emp_m = pd.DataFrame(columns=["id", "dosya_id", "masraf_tutari", "iade_tutari"])
+            m_emp_n = pd.DataFrame(columns=["id", "dosya_id", "tarih", "not_icerik"])
+            m_emp_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani"])
+
             for _, d_row in m_dosyalar.iterrows():
                 d_id = int(d_row['id'])
-                t_df = pd.read_sql_query("SELECT id, tarih, tutar, aciklama FROM tahsilatlar WHERE dosya_id = ? ORDER BY tarih ASC", conn, params=[d_id])
-                m_df = pd.read_sql_query("SELECT masraf_tutari, iade_tutari FROM masraflar WHERE dosya_id = ?", conn, params=[d_id])
-                n_df = pd.read_sql_query("SELECT tarih, not_icerik FROM dosya_notlari WHERE dosya_id = ? ORDER BY tarih DESC", conn, params=[d_id])
+                t_df = m_t_grp.get(d_id, m_emp_t)
+                m_df = m_m_grp.get(d_id, m_emp_m)
+                n_df = m_n_grp.get(d_id, m_emp_n)
+                m_ak_df = m_ak_grp.get(d_id, m_emp_ak)
 
                 t_masraf = m_df['masraf_tutari'].sum() if not m_df.empty else 0.0
                 t_iade = m_df['iade_tutari'].sum() if not m_df.empty else 0.0
                 n_masraf = t_masraf - t_iade
-
-                m_ak_df = pd.read_sql_query("SELECT kalem_adi, tutar, t_oncesi_faiz, faiz_turu, faiz_orani FROM alacak_kalemleri WHERE dosya_id = ?", conn, params=[d_id])
 
                 rem_p, rem_i, tot_pay, *_ = hesapla_kademeli_dosya_hesabi(
                     d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], t_df,
@@ -2260,7 +2295,7 @@ elif menu == "Yeni Dosya Açılışı":
         </div>
         """, unsafe_allow_html=True)
 
-    taraflar_list = pd.read_sql_query("SELECT ad_unvan FROM taraflar ORDER BY ad_unvan", conn)['ad_unvan'].tolist()
+    taraflar_list = get_cached_taraflar_list()
 
     if not taraflar_list:
         st.warning("⚠️ Dosya açabilmek için önce 'Taraf Yönetimi' sekmesinden en az bir müvekkil ve borçlu tanımlamalı veya yukarıya UDF yüklemelisiniz.")
