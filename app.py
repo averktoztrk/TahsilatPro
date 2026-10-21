@@ -1291,10 +1291,6 @@ with st.sidebar:
 # -------------------------------------------------------------
 # 8. MODÜL 1: ÇALIŞMA MASASI & ARAMA MOTORU
 # -------------------------------------------------------------
-if menu == "Dosya Arama & Çalışma Masası":
-    st.markdown(f"<h2 style='color:{accent_green}; margin-bottom: 4px;'>🗂️ İcra Dosyaları Çalışma Masası</h2>", unsafe_allow_html=True)
-    st.caption("Derdest icra dosyalarınızı filtreleyin, üzerine tıklayarak canlı hesap cetvelini ve işlem panelini açın.")
-    
 @st.cache_data(ttl=30)
 def get_cached_dosyalar_kpi():
     try:
@@ -1314,13 +1310,17 @@ if menu == "Dosya Arama & Çalışma Masası":
     tum_dosyalar, tum_tahsilatlar = get_cached_dosyalar_kpi()
     
     toplam_dosya_sayisi = len(tum_dosyalar)
-    itirazli_sayisi = len(tum_dosyalar[tum_dosyalar['itiraz_edildi'] == 1]) if not tum_dosyalar.empty else 0
+    is_closed_mask = tum_dosyalar['durum'].astype(str).str.contains("Kapatıldı|İnfaz|Kapalı", case=False, na=False) if not tum_dosyalar.empty else pd.Series([], dtype=bool)
+    derdest_dosyalar = tum_dosyalar[~is_closed_mask] if not tum_dosyalar.empty else pd.DataFrame()
+    toplam_derdest_sayisi = len(derdest_dosyalar)
+    derdest_ana_para_tl = derdest_dosyalar['ana_para'].sum() if not derdest_dosyalar.empty else 0.0
+
+    itirazli_sayisi = len(derdest_dosyalar[derdest_dosyalar['itiraz_edildi'] == 1]) if not derdest_dosyalar.empty else 0
     toplam_tahsil_tl = tum_tahsilatlar['tutar'].sum() if not tum_tahsilatlar.empty else 0.0
-    toplam_ana_para_tl = tum_dosyalar['ana_para'].sum() if not tum_dosyalar.empty else 0.0
     
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Toplam Derdest Dosya", f"{toplam_dosya_sayisi} Adet")
-    kpi2.metric("Portföy Asıl Alacak", format_tr_money(toplam_ana_para_tl))
+    kpi1.metric("Toplam Derdest Dosya", f"{toplam_derdest_sayisi} Adet", help=f"Toplam kayıtlı: {toplam_dosya_sayisi} dosya ({toplam_dosya_sayisi - toplam_derdest_sayisi} Kapalı/İnfaz)")
+    kpi2.metric("Derdest Asıl Alacak", format_tr_money(derdest_ana_para_tl), help="Yalnızca açık/derdest icra dosyalarının asıl alacak toplamı")
     kpi3.metric("Kasaya Giren Tahsilat", format_tr_money(toplam_tahsil_tl))
     kpi4.metric("🚨 İtirazlı Dosyalar", f"{itirazli_sayisi} Adet")
     
@@ -1444,18 +1444,18 @@ if menu == "Dosya Arama & Çalışma Masası":
 
         kalan_anaparalar, kalan_faizler, toplam_tahsilatlar, guncel_bakiyeler = [], [], [], []
         
-        file_ids = tuple(df['id'].tolist()) if len(df) > 1 else f"({df['id'].iloc[0]})"
-        all_tahsilatlar = pd.read_sql_query(f"SELECT id, dosya_id, tarih, tutar, aciklama FROM tahsilatlar WHERE dosya_id IN {file_ids} ORDER BY tarih ASC", conn)
-        all_masraflar = pd.read_sql_query(f"SELECT id, dosya_id, masraf_tutari, iade_tutari FROM masraflar WHERE dosya_id IN {file_ids}", conn)
-        all_alacak_kalemleri = pd.read_sql_query(f"SELECT id, dosya_id, kalem_adi, tutar, t_oncesi_faiz, faiz_turu, faiz_orani FROM alacak_kalemleri WHERE dosya_id IN {file_ids}", conn)
+        file_ids = f"({','.join(map(str, df['id'].tolist()))})"
+        all_tahsilatlar = pd.read_sql_query(f"SELECT * FROM tahsilatlar WHERE dosya_id IN {file_ids} ORDER BY tarih ASC", conn)
+        all_masraflar = pd.read_sql_query(f"SELECT * FROM masraflar WHERE dosya_id IN {file_ids} ORDER BY tarih ASC", conn)
+        all_alacak_kalemleri = pd.read_sql_query(f"SELECT * FROM alacak_kalemleri WHERE dosya_id IN {file_ids}", conn)
 
         tahsilat_groups = dict(tuple(all_tahsilatlar.groupby("dosya_id"))) if not all_tahsilatlar.empty else {}
         masraf_groups = dict(tuple(all_masraflar.groupby("dosya_id"))) if not all_masraflar.empty else {}
         ak_groups = dict(tuple(all_alacak_kalemleri.groupby("dosya_id"))) if not all_alacak_kalemleri.empty else {}
 
         empty_tahsilat = pd.DataFrame(columns=["id", "dosya_id", "tarih", "tutar", "aciklama"])
-        empty_masraf = pd.DataFrame(columns=["id", "dosya_id", "masraf_tutari", "iade_tutari"])
-        empty_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani"])
+        empty_masraf = pd.DataFrame(columns=["id", "dosya_id", "tarih", "aciklama", "masraf_tutari", "iade_tutari"])
+        empty_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani", "kalem_turu", "sorumlu_borclular"])
 
         for _, r in df.iterrows():
             d_id = r['id']
@@ -1467,7 +1467,9 @@ if menu == "Dosya Arama & Çalışma Masası":
             toplam_i = masraf_df['iade_tutari'].sum() if not masraf_df.empty else 0.0
             net_m = toplam_m - toplam_i
 
-            rem_p, rem_i, tot_pay, *_ = hesapla_kademeli_dosya_hesabi(
+            is_infaz = bool(re.search(r"Kapatıldı|İnfaz|Kapalı", str(r.get('durum', '')), re.I))
+
+            rem_p, rem_i, tot_pay, m_list, *_ = hesapla_kademeli_dosya_hesabi(
                 r['ana_para'], r['faiz_orani'], r['takip_tarihi'], r['t_oncesi_faiz'], tahsilat_df,
                 faiz_turu=r.get('faiz_turu', 'Özel Oran'),
                 masraflar_df=masraf_df,
@@ -1489,12 +1491,37 @@ if menu == "Dosya Arama & Çalışma Masası":
             else:
                 cezaevi_harci = round(cikis_tutari * (c_harc_oran / 100.0), 2)
 
-            kalan_anaparalar.append(format_tr_money(rem_p))
-            kalan_faizler.append(format_tr_money(rem_i))
-            toplam_tahsilatlar.append(format_tr_money(tot_pay))
-            
-            toplam_borc = rem_p + rem_i + float(r['vekalet_ucreti']) + net_m + tahsil_harci + cezaevi_harci
-            guncel_bakiyeler.append(format_tr_money(toplam_borc))
+            if is_infaz:
+                kalan_anaparalar.append("0,00 TL")
+                kalan_faizler.append("0,00 TL")
+                toplam_tahsilatlar.append(format_tr_money(tot_pay))
+                guncel_bakiyeler.append("0,00 TL (İnfaz)")
+            else:
+                consumed_in_items = sum(
+                    float(parse_tr_money(m_item.get("Masrafa Mahsup", "0"))) +
+                    float(parse_tr_money(m_item.get("Faize Mahsup", "0"))) +
+                    float(parse_tr_money(m_item.get("Ana Paraya Mahsup", "0")))
+                    for m_item in m_list
+                )
+                leftover_pay = max(0.0, tot_pay - consumed_in_items)
+                
+                s_vekalet = float(r.get('vekalet_ucreti', 0.0))
+                kalan_vekalet = max(0.0, s_vekalet - leftover_pay)
+                leftover_pay = max(0.0, leftover_pay - s_vekalet)
+                
+                kalan_th = max(0.0, tahsil_harci - leftover_pay)
+                leftover_pay = max(0.0, leftover_pay - tahsil_harci)
+                
+                kalan_ch = max(0.0, cezaevi_harci - leftover_pay)
+                
+                toplam_borc = rem_p + rem_i + kalan_vekalet + net_m + kalan_th + kalan_ch
+                if toplam_borc <= 0.05:
+                    toplam_borc = 0.0
+                
+                kalan_anaparalar.append(format_tr_money(rem_p))
+                kalan_faizler.append(format_tr_money(rem_i))
+                toplam_tahsilatlar.append(format_tr_money(tot_pay))
+                guncel_bakiyeler.append(format_tr_money(toplam_borc))
 
         df['Kalan Ana Para'] = kalan_anaparalar
         df['İşlemiş Faiz'] = kalan_faizler
@@ -1609,12 +1636,44 @@ if menu == "Dosya Arama & Çalışma Masası":
                 else:
                     ch_is_haric = global_ch_haric
 
+                is_infaz = bool(re.search(r"Kapatıldı|İnfaz|Kapalı", str(secili_dosya.get('durum', '')), re.I))
+
                 if ch_is_haric or s_ch_oran == 0.0:
                     cezaevi_harci_tutar = 0.0
                 else:
                     cezaevi_harci_tutar = round(cikis_bedeli * (s_ch_oran / 100.0), 2)
                 
-                kalan_toplam_dosya_borcu = rem_p + rem_i + float(secili_dosya['vekalet_ucreti']) + net_masraf + tahsil_harci_tutar + cezaevi_harci_tutar
+                if is_infaz:
+                    rem_p = 0.0
+                    rem_i = 0.0
+                    rem_pre_i = 0.0
+                    rem_post_i = 0.0
+                    net_masraf = 0.0
+                    kalan_vekalet = 0.0
+                    kalan_th = 0.0
+                    kalan_ch = 0.0
+                    kalan_toplam_dosya_borcu = 0.0
+                else:
+                    consumed_in_items = sum(
+                        float(parse_tr_money(m_item.get("Masrafa Mahsup", "0"))) +
+                        float(parse_tr_money(m_item.get("Faize Mahsup", "0"))) +
+                        float(parse_tr_money(m_item.get("Ana Paraya Mahsup", "0")))
+                        for m_item in mahsup_list
+                    )
+                    leftover_pay = max(0.0, tot_pay - consumed_in_items)
+                    
+                    s_vekalet = float(secili_dosya.get('vekalet_ucreti', 0.0))
+                    kalan_vekalet = max(0.0, s_vekalet - leftover_pay)
+                    leftover_pay = max(0.0, leftover_pay - s_vekalet)
+                    
+                    kalan_th = max(0.0, tahsil_harci_tutar - leftover_pay)
+                    leftover_pay = max(0.0, leftover_pay - tahsil_harci_tutar)
+                    
+                    kalan_ch = max(0.0, cezaevi_harci_tutar - leftover_pay)
+                    
+                    kalan_toplam_dosya_borcu = rem_p + rem_i + kalan_vekalet + net_masraf + kalan_th + kalan_ch
+                    if kalan_toplam_dosya_borcu <= 0.05:
+                        kalan_toplam_dosya_borcu = 0.0
 
                 st.markdown("---")
                 header_c1, header_c2 = st.columns([3.5, 1])
@@ -1661,15 +1720,17 @@ if menu == "Dosya Arama & Çalışma Masası":
                         st.caption("Farklı faiz türü ve oranına tabi asıl alacak, çek tazminatı, işlemiş faiz veya komisyon gibi kalemleri ayrı ayrı takip edin.")
 
                         if not ak_df.empty:
+                            k_turu_col = ak_df["kalem_turu"].fillna("Asıl Alacak") if "kalem_turu" in ak_df.columns else pd.Series(["Asıl Alacak"] * len(ak_df), index=ak_df.index)
+                            s_borclu_col = ak_df["sorumlu_borclular"].fillna("Tüm Borçlular") if "sorumlu_borclular" in ak_df.columns else pd.Series(["Tüm Borçlular"] * len(ak_df), index=ak_df.index)
                             ak_goster = pd.DataFrame({
                                 "ID": ak_df["id"],
                                 "Alacak Kalemi Adı": ak_df["kalem_adi"],
-                                "Kalem Türü": ak_df["kalem_turu"].fillna("Asıl Alacak"),
+                                "Kalem Türü": k_turu_col,
                                 "Tutar": ak_df["tutar"].apply(format_tr_money),
                                 "Takip Öncesi Faiz": ak_df["t_oncesi_faiz"].apply(format_tr_money),
                                 "Faiz Türü": ak_df["faiz_turu"],
                                 "Faiz Oranı": ak_df["faiz_orani"].apply(lambda x: f"%{x:.2f}"),
-                                "Sorumlu Borçlu(lar)": ak_df["sorumlu_borclular"].fillna("Tüm Borçlular")
+                                "Sorumlu Borçlu(lar)": s_borclu_col
                             })
                             st.dataframe(ak_goster, use_container_width=True, hide_index=True)
 
@@ -2141,31 +2202,45 @@ if menu == "Dosya Arama & Çalışma Masası":
                     if not ak_df.empty and not ak_df[ak_df['faiz_turu'] != 'Faizsiz'].empty:
                         gosterim_orani = float(ak_df[ak_df['faiz_turu'] != 'Faizsiz']['faiz_orani'].iloc[0])
 
-                    cezaevi_row = f'<div class="financial-row" style="color: #94A3B8;"><span>Cezaevi Harcı (%{s_ch_oran:.2f}) [Hariç]:</span><strong>0,00 TL</strong></div>' if ch_is_haric else f'<div class="financial-row"><span>Cezaevi Harcı (%{s_ch_oran:.2f}):</span><strong>{format_tr_money(cezaevi_harci_tutar)}</strong></div>'
-                    toplam_etiket = "GÜNCEL TOPLAM BORÇ (CEZAEVİ HARİÇ)" if ch_is_haric else "GÜNCEL TOPLAM BORÇ (HARÇLAR DAHİL)"
+                    if is_infaz:
+                        badge_durum = f"🔒 {secili_dosya['durum']}"
+                        borc_box_html = f"""<div class="financial-total-box" style="background: linear-gradient(135deg, #059669 0%, #10B981 100%);">
+<div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #FFFFFF; font-weight: 600;">DOSYA İNFAZ EDİLDİ / KAPANDI</div>
+<div style="font-size: 22px; font-weight: 700; color: #FFFFFF; margin-top: 2px;">0,00 TL</div>
+</div>"""
+                        kalan_vekalet_str = "0,00 TL (Tahsil Edildi)"
+                        kalan_th_str = "0,00 TL (Tahsil Edildi)"
+                        cezaevi_row = f'<div class="financial-row" style="color: #94A3B8;"><span>Cezaevi Harcı (%{s_ch_oran:.2f}):</span><strong>0,00 TL (Tahsil Edildi)</strong></div>'
+                    else:
+                        badge_durum = str(secili_dosya['durum'])
+                        toplam_etiket = "GÜNCEL TOPLAM BORÇ (CEZAEVİ HARİÇ)" if ch_is_haric else "GÜNCEL TOPLAM BORÇ (HARÇLAR DAHİL)"
+                        borc_box_html = f"""<div class="financial-total-box">
+<div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #FFFFFF; font-weight: 600;">{toplam_etiket}</div>
+<div style="font-size: 20px; font-weight: 700; color: #FFFFFF; margin-top: 2px;">{format_tr_money(kalan_toplam_dosya_borcu)}</div>
+</div>"""
+                        kalan_vekalet_str = format_tr_money(kalan_vekalet)
+                        kalan_th_str = format_tr_money(kalan_th)
+                        cezaevi_row = f'<div class="financial-row" style="color: #94A3B8;"><span>Cezaevi Harcı (%{s_ch_oran:.2f}) [Hariç]:</span><strong>0,00 TL</strong></div>' if ch_is_haric else f'<div class="financial-row"><span>Kalan Cezaevi Harcı (%{s_ch_oran:.2f}):</span><strong>{format_tr_money(kalan_ch)}</strong></div>'
 
                     html_content = f"""<div class="financial-card">
 <div class="financial-card-header">
 <span style="font-weight: 600; font-size: 13.5px; color: {accent_green};">📊 Canlı Dosya Hesabı</span>
-<span style="font-size: 11px; background-color: {card_border}; padding: 2px 6px; border-radius: 4px; color: {text_main}; font-weight: 600;">{secili_dosya['durum']}</span>
+<span style="font-size: 11px; background-color: {card_border}; padding: 2px 6px; border-radius: 4px; color: {text_main}; font-weight: 600;">{badge_durum}</span>
 </div>
 <div class="financial-row"><span>Takip Açılış Tarihi:</span><strong style="color:{accent_green};">📅 {secili_dosya['takip_tarihi']}</strong></div>
 <div class="financial-row"><span>Asıl Alacak:</span><strong>{format_tr_money(secili_dosya['ana_para'])}</strong></div>
 <div class="financial-row"><span>Kalan Takip Öncesi Faiz:</span><strong>{format_tr_money(rem_pre_i)}</strong></div>
 <div class="financial-row"><span>Takip Açılış Çıkışı:</span><strong>{format_tr_money(secili_dosya['takip_cikisi'])}</strong></div>
-<div class="financial-row"><span>İcra Vekalet Ücreti (Sabit):</span><strong>{format_tr_money(secili_dosya['vekalet_ucreti'])}</strong></div>
+<div class="financial-row"><span>Kalan Vekalet Ücreti:</span><strong>{kalan_vekalet_str}</strong></div>
 <div class="financial-row" style="background-color: {card_bg};"><span>Takip Sonrası İşlemiş Faiz (%{float(gosterim_orani):.2f}):</span><strong style="color:{accent_green};">{format_tr_money(rem_post_i)}</strong></div>
 <div class="financial-row"><span>Kalan Ana Para:</span><strong>{format_tr_money(rem_p)}</strong></div>
 <div class="financial-row"><span>Toplam Yapılan Masraf:</span><strong>{format_tr_money(top_masraf)}</strong></div>
 <div class="financial-row"><span>Masraf İadeleri (-):</span><strong>{format_tr_money(top_iade)}</strong></div>
 <div class="financial-row"><span>Net Masraf Bakiyesi:</span><strong>{format_tr_money(net_masraf)}</strong></div>
-<div class="financial-row"><span>Tahsil Harcı (%{s_th_oran:.2f}):</span><strong>{format_tr_money(tahsil_harci_tutar)}</strong></div>
+<div class="financial-row"><span>Kalan Tahsil Harcı (%{s_th_oran:.2f}):</span><strong>{kalan_th_str}</strong></div>
 {cezaevi_row}
 <div class="financial-row" style="color: {accent_green};"><span>Toplam Tahsil Edilen (-):</span><strong style="color: {accent_green};">{format_tr_money(tot_pay)}</strong></div>
-<div class="financial-total-box">
-<div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #FFFFFF; font-weight: 600;">{toplam_etiket}</div>
-<div style="font-size: 20px; font-weight: 700; color: #FFFFFF; margin-top: 2px;">{format_tr_money(kalan_toplam_dosya_borcu)}</div>
-</div>
+{borc_box_html}
 </div>"""
                     st.markdown(html_content, unsafe_allow_html=True)
     else:
