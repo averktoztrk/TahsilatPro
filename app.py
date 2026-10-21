@@ -971,149 +971,146 @@ CEZAEVI_HARCI_SECENEKLERI = {
 
 from db_manager import conn, cursor, IntegrityError, DB_STATUS, DB_ERROR, IS_POSTGRES
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS taraflar (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tip TEXT,
-    ad_unvan TEXT UNIQUE,
-    tc_vkn TEXT,
-    vergi_dairesi TEXT,
-    telefon TEXT,
-    adres TEXT
-)
-""")
+def init_sqlite_tables_if_needed():
+    if IS_POSTGRES:
+        return
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS taraflar (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tip TEXT,
+        ad_unvan TEXT UNIQUE,
+        tc_vkn TEXT,
+        vergi_dairesi TEXT,
+        telefon TEXT,
+        adres TEXT
+    )
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS dosyalar (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        il TEXT,
+        ilce TEXT,
+        icra_dairesi TEXT,
+        dosya_no TEXT,
+        alacakli TEXT,
+        borclu TEXT,
+        takip_turu TEXT DEFAULT 'Örnek No: 7 (İlamsız Takip - Para/Teminat)',
+        takip_tarihi TEXT,
+        ana_para REAL DEFAULT 0,
+        t_oncesi_faiz REAL DEFAULT 0,
+        takip_cikisi REAL DEFAULT 0,
+        vekalet_ucreti REAL DEFAULT 0,
+        faiz_turu TEXT,
+        faiz_orani REAL DEFAULT 0,
+        itiraz_edildi INTEGER DEFAULT 0,
+        kesinlesme_durumu INTEGER DEFAULT 0,
+        durum TEXT DEFAULT 'Açık',
+        tahsil_harci_safhasi TEXT DEFAULT 'Ödeme Emri Tebliğinden Sonra, Hacizden Önce (%9.10)',
+        tahsil_harci_orani REAL DEFAULT 9.10,
+        cezaevi_harci_orani REAL DEFAULT 2.00
+    )
+    """)
+    cursor.execute("PRAGMA table_info(dosyalar)")
+    mevcut_kolonlar = [row[1] for row in cursor.fetchall()]
+    if "takip_turu" not in mevcut_kolonlar:
+        try:
+            cursor.execute("ALTER TABLE dosyalar ADD COLUMN takip_turu TEXT DEFAULT 'Örnek No: 7 (İlamsız Takip - Para/Teminat)'")
+            conn.commit()
+        except Exception:
+            pass
+    if "tahsil_harci_safhasi" not in mevcut_kolonlar:
+        try:
+            cursor.execute("ALTER TABLE dosyalar ADD COLUMN tahsil_harci_safhasi TEXT DEFAULT 'Ödeme Emri Tebliğinden Sonra, Hacizden Önce (%9.10)'")
+            conn.commit()
+        except Exception:
+            pass
+    if "tahsil_harci_orani" not in mevcut_kolonlar:
+        try:
+            cursor.execute("ALTER TABLE dosyalar ADD COLUMN tahsil_harci_orani REAL DEFAULT 9.10")
+            conn.commit()
+        except Exception:
+            pass
+    if "cezaevi_harci_orani" not in mevcut_kolonlar:
+        try:
+            cursor.execute("ALTER TABLE dosyalar ADD COLUMN cezaevi_harci_orani REAL DEFAULT 2.00")
+            conn.commit()
+        except Exception:
+            pass
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS tahsilatlar (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dosya_id INTEGER,
+        tarih TEXT,
+        tutar REAL DEFAULT 0,
+        aciklama TEXT,
+        FOREIGN KEY(dosya_id) REFERENCES dosyalar(id)
+    )
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS masraflar (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dosya_id INTEGER,
+        tarih TEXT,
+        aciklama TEXT,
+        masraf_tutari REAL DEFAULT 0,
+        iade_tutari REAL DEFAULT 0,
+        FOREIGN KEY(dosya_id) REFERENCES dosyalar(id)
+    )
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS dosya_notlari (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dosya_id INTEGER,
+        tarih TEXT,
+        not_icerik TEXT,
+        FOREIGN KEY(dosya_id) REFERENCES dosyalar(id)
+    )
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS faiz_oranlari (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        faiz_turu TEXT,
+        baslangic_tarihi TEXT,
+        bitis_tarihi TEXT,
+        oran REAL,
+        aciklama TEXT
+    )
+    """)
+    cursor.execute("SELECT COUNT(*) FROM faiz_oranlari")
+    if cursor.fetchone()[0] == 0:
+        varsayilan_faizler = [
+            ("Ticari Avans Faizi", "2000-01-01", "2023-08-31", 9.75, "TCMB Avans Faizi"),
+            ("Ticari Avans Faizi", "2023-09-01", "2023-12-22", 35.75, "TCMB Avans Faizi"),
+            ("Ticari Avans Faizi", "2023-12-23", "2024-03-31", 44.25, "TCMB Avans Faizi"),
+            ("Ticari Avans Faizi", "2024-04-01", "2099-12-31", 48.00, "TCMB Avans Faizi (Güncel)"),
+            ("Reeskont Faizi", "2000-01-01", "2023-08-31", 8.75, "TCMB Reeskont İskonto Faizi"),
+            ("Reeskont Faizi", "2023-09-01", "2023-12-22", 34.75, "TCMB Reeskont İskonto Faizi"),
+            ("Reeskont Faizi", "2023-12-23", "2024-03-31", 43.25, "TCMB Reeskont İskonto Faizi"),
+            ("Reeskont Faizi", "2024-04-01", "2099-12-31", 39.75, "TCMB Reeskont İskonto Faizi (Güncel)"),
+            ("Yasal Faiz", "2000-01-01", "2005-12-31", 12.00, "3095 Sayılı Kanun m. 1"),
+            ("Yasal Faiz", "2006-01-01", "2024-05-31", 9.00, "3095 Sayılı Kanun m. 1"),
+            ("Yasal Faiz", "2024-06-01", "2026-07-30", 24.00, "3095 Sayılı Kanun (21.05.2024 C.B. Kararı: 8485)"),
+            ("Yasal Faiz", "2026-07-31", "2099-12-31", 31.00, "3095 s.K. m. 1 (7589 s.K. 10. md - Güncel %31)")
+        ]
+        cursor.executemany("""
+        INSERT INTO faiz_oranlari (faiz_turu, baslangic_tarihi, bitis_tarihi, oran, aciklama)
+        VALUES (?, ?, ?, ?, ?)
+        """, varsayilan_faizler)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS alacak_kalemleri (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dosya_id INTEGER,
+        kalem_adi TEXT DEFAULT 'Asıl Alacak',
+        tutar REAL DEFAULT 0,
+        t_oncesi_faiz REAL DEFAULT 0,
+        faiz_turu TEXT DEFAULT 'Ticari Avans Faizi (%48.00)',
+        faiz_orani REAL DEFAULT 48.0,
+        FOREIGN KEY(dosya_id) REFERENCES dosyalar(id)
+    )
+    """)
+    conn.commit()
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS dosyalar (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    il TEXT,
-    ilce TEXT,
-    icra_dairesi TEXT,
-    dosya_no TEXT,
-    alacakli TEXT,
-    borclu TEXT,
-    takip_turu TEXT DEFAULT 'Örnek No: 7 (İlamsız Takip - Para/Teminat)',
-    takip_tarihi TEXT,
-    ana_para REAL DEFAULT 0,
-    t_oncesi_faiz REAL DEFAULT 0,
-    takip_cikisi REAL DEFAULT 0,
-    vekalet_ucreti REAL DEFAULT 0,
-    faiz_turu TEXT,
-    faiz_orani REAL DEFAULT 0,
-    itiraz_edildi INTEGER DEFAULT 0,
-    kesinlesme_durumu INTEGER DEFAULT 0,
-    durum TEXT DEFAULT 'Açık',
-    tahsil_harci_safhasi TEXT DEFAULT 'Ödeme Emri Tebliğinden Sonra, Hacizden Önce (%9.10)',
-    tahsil_harci_orani REAL DEFAULT 9.10,
-    cezaevi_harci_orani REAL DEFAULT 2.00
-)
-""")
-
-cursor.execute("PRAGMA table_info(dosyalar)")
-mevcut_kolonlar = [row[1] for row in cursor.fetchall()]
-if "takip_turu" not in mevcut_kolonlar:
-    try:
-        cursor.execute("ALTER TABLE dosyalar ADD COLUMN takip_turu TEXT DEFAULT 'Örnek No: 7 (İlamsız Takip - Para/Teminat)'")
-        conn.commit()
-    except Exception:
-        pass
-if "tahsil_harci_safhasi" not in mevcut_kolonlar:
-    try:
-        cursor.execute("ALTER TABLE dosyalar ADD COLUMN tahsil_harci_safhasi TEXT DEFAULT 'Ödeme Emri Tebliğinden Sonra, Hacizden Önce (%9.10)'")
-        conn.commit()
-    except Exception:
-        pass
-if "tahsil_harci_orani" not in mevcut_kolonlar:
-    try:
-        cursor.execute("ALTER TABLE dosyalar ADD COLUMN tahsil_harci_orani REAL DEFAULT 9.10")
-        conn.commit()
-    except Exception:
-        pass
-if "cezaevi_harci_orani" not in mevcut_kolonlar:
-    try:
-        cursor.execute("ALTER TABLE dosyalar ADD COLUMN cezaevi_harci_orani REAL DEFAULT 2.00")
-        conn.commit()
-    except Exception:
-        pass
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS tahsilatlar (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    dosya_id INTEGER,
-    tarih TEXT,
-    tutar REAL DEFAULT 0,
-    aciklama TEXT,
-    FOREIGN KEY(dosya_id) REFERENCES dosyalar(id)
-)
-""")
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS masraflar (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    dosya_id INTEGER,
-    tarih TEXT,
-    aciklama TEXT,
-    masraf_tutari REAL DEFAULT 0,
-    iade_tutari REAL DEFAULT 0,
-    FOREIGN KEY(dosya_id) REFERENCES dosyalar(id)
-)
-""")
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS dosya_notlari (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    dosya_id INTEGER,
-    tarih TEXT,
-    not_icerik TEXT,
-    FOREIGN KEY(dosya_id) REFERENCES dosyalar(id)
-)
-""")
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS faiz_oranlari (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    faiz_turu TEXT,
-    baslangic_tarihi TEXT,
-    bitis_tarihi TEXT,
-    oran REAL,
-    aciklama TEXT
-)
-""")
-
-cursor.execute("SELECT COUNT(*) FROM faiz_oranlari")
-if cursor.fetchone()[0] == 0:
-    varsayilan_faizler = [
-        ("Ticari Avans Faizi", "2000-01-01", "2023-08-31", 9.75, "TCMB Avans Faizi"),
-        ("Ticari Avans Faizi", "2023-09-01", "2023-12-22", 35.75, "TCMB Avans Faizi"),
-        ("Ticari Avans Faizi", "2023-12-23", "2024-03-31", 44.25, "TCMB Avans Faizi"),
-        ("Ticari Avans Faizi", "2024-04-01", "2099-12-31", 48.00, "TCMB Avans Faizi (Güncel)"),
-        ("Reeskont Faizi", "2000-01-01", "2023-08-31", 8.75, "TCMB Reeskont İskonto Faizi"),
-        ("Reeskont Faizi", "2023-09-01", "2023-12-22", 34.75, "TCMB Reeskont İskonto Faizi"),
-        ("Reeskont Faizi", "2023-12-23", "2024-03-31", 43.25, "TCMB Reeskont İskonto Faizi"),
-        ("Reeskont Faizi", "2024-04-01", "2099-12-31", 39.75, "TCMB Reeskont İskonto Faizi (Güncel)"),
-        ("Yasal Faiz", "2000-01-01", "2005-12-31", 12.00, "3095 Sayılı Kanun m. 1"),
-        ("Yasal Faiz", "2006-01-01", "2024-05-31", 9.00, "3095 Sayılı Kanun m. 1"),
-        ("Yasal Faiz", "2024-06-01", "2026-07-30", 24.00, "3095 Sayılı Kanun (21.05.2024 C.B. Kararı: 8485)"),
-        ("Yasal Faiz", "2026-07-31", "2099-12-31", 31.00, "3095 s.K. m. 1 (7589 s.K. 10. md - Güncel %31)")
-    ]
-    cursor.executemany("""
-    INSERT INTO faiz_oranlari (faiz_turu, baslangic_tarihi, bitis_tarihi, oran, aciklama)
-    VALUES (?, ?, ?, ?, ?)
-    """, varsayilan_faizler)
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS alacak_kalemleri (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    dosya_id INTEGER,
-    kalem_adi TEXT DEFAULT 'Asıl Alacak',
-    tutar REAL DEFAULT 0,
-    t_oncesi_faiz REAL DEFAULT 0,
-    faiz_turu TEXT DEFAULT 'Ticari Avans Faizi (%48.00)',
-    faiz_orani REAL DEFAULT 48.0,
-    FOREIGN KEY(dosya_id) REFERENCES dosyalar(id)
-)
-""")
-conn.commit()
+init_sqlite_tables_if_needed()
 
 # -------------------------------------------------------------
 # 7. SOL MENÜ & JUS LOGO & OTURUM KONTROLÜ

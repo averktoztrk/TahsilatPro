@@ -146,17 +146,11 @@ class PostgresConnWrapper:
             sep = "&" if "?" in dsn else "?"
             dsn = f"{dsn}{sep}sslmode=require"
         self._raw_conn = psycopg2.connect(dsn, connect_timeout=15)
+        self._raw_conn.autocommit = True
 
     def _ensure_connected(self):
         if self._raw_conn is None or self._raw_conn.closed:
             self._connect()
-        else:
-            try:
-                # Quick health check
-                with self._raw_conn.cursor() as cur:
-                    cur.execute("SELECT 1;")
-            except Exception:
-                self._reconnect()
 
     def _reconnect(self):
         try:
@@ -173,13 +167,19 @@ class PostgresConnWrapper:
 
     def commit(self):
         with _lock:
-            self._ensure_connected()
-            return self._raw_conn.commit()
+            if self._raw_conn and not self._raw_conn.closed:
+                try:
+                    return self._raw_conn.commit()
+                except Exception:
+                    pass
 
     def rollback(self):
         with _lock:
             if self._raw_conn and not self._raw_conn.closed:
-                return self._raw_conn.rollback()
+                try:
+                    return self._raw_conn.rollback()
+                except Exception:
+                    pass
 
     def close(self):
         with _lock:
@@ -199,12 +199,12 @@ if USE_POSTGRES:
         IntegrityError = PGIntegrityError
         DB_STATUS = "🟢 Supabase Bulut Veritabanı Aktif"
         IS_POSTGRES = True
-        print(f"{DB_STATUS}")
+        print("[DB] Supabase PostgreSQL connected successfully.")
     except Exception as e:
         DB_ERROR = str(e)
         DB_STATUS = f"⚠️ Supabase Bağlantı Hatası: {e}"
         IS_POSTGRES = False
-        print(f"Failed to connect to Supabase: {e}. Falling back to SQLite.")
+        print(f"[DB] Failed to connect to Supabase: {e}. Falling back to SQLite.")
         conn = sqlite3.connect("tahsilat_pro.db", check_same_thread=False)
         cursor = conn.cursor()
         IntegrityError = sqlite3.IntegrityError
