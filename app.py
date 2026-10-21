@@ -1830,20 +1830,64 @@ if menu == "Dosya Arama & Çalışma Masası":
                                     st.rerun()
 
                     with t_notlar:
-                        with st.form("form_not_add"):
+                        st.markdown("##### ➕ Yeni Not Ekle")
+                        with st.form(f"form_not_add_{secili_id}"):
                             cn1, cn2 = st.columns([1, 3])
                             with cn1:
-                                n_date = st.date_input("Not Tarihi", value=date.today())
+                                n_date = st.date_input("Not Tarihi", value=date.today(), key=f"new_not_date_{secili_id}")
                             with cn2:
-                                n_text = st.text_area("İcra Notu / Borçlu Taahhüdü", height=70)
-                            if st.form_submit_button("Notu Kaydet", type="primary"):
+                                n_text = st.text_area("İcra Notu / Borçlu Taahhüdü", height=70, placeholder="Örn: Borçlu ile görüşüldü, Cuma gününe kadar 50.000 TL ödeme taahhüdünde bulundu.", key=f"new_not_text_{secili_id}")
+                            if st.form_submit_button("💾 Notu Kaydet", type="primary"):
                                 if n_text.strip():
                                     cursor.execute("INSERT INTO dosya_notlari (dosya_id, tarih, not_icerik) VALUES (?, ?, ?)", (secili_id, str(n_date), n_text.strip()))
                                     conn.commit()
+                                    st.success("Not başarıyla kaydedildi!")
                                     st.rerun()
+                                else:
+                                    st.warning("Lütfen bir not metni girin.")
 
+                        st.markdown("---")
+                        st.markdown("##### 📋 Kayıtlı Dosya Notları")
                         if not notlar_df.empty:
-                            st.dataframe(notlar_df[["tarih", "not_icerik"]], use_container_width=True, hide_index=True)
+                            goster_notlar = notlar_df[["id", "tarih", "not_icerik"]].copy()
+                            goster_notlar.columns = ["Kayıt No", "Tarih", "Not İçeriği"]
+                            st.dataframe(goster_notlar, use_container_width=True, hide_index=True)
+
+                            st.markdown("##### ✏️ Not Düzenle veya Sil")
+                            not_dict = {f"#{r['id']} | {r['tarih']} - {str(r['not_icerik'])[:55]}...": r['id'] for _, r in notlar_df.iterrows()}
+                            sel_not_label = st.selectbox("İşlem Yapılacak Notu Seçin", list(not_dict.keys()), key=f"sel_not_box_{secili_id}")
+                            sel_not_id = not_dict[sel_not_label]
+                            sel_not_row = notlar_df[notlar_df['id'] == sel_not_id].iloc[0]
+
+                            try:
+                                def_not_date = datetime.strptime(str(sel_not_row['tarih']), "%Y-%m-%d").date()
+                            except Exception:
+                                def_not_date = date.today()
+
+                            ed_nc1, ed_nc2 = st.columns([1, 3])
+                            with ed_nc1:
+                                edt_n_date = st.date_input("Tarih Düzenle", value=def_not_date, key=f"edt_date_{sel_not_id}")
+                            with ed_nc2:
+                                edt_n_text = st.text_area("Not Metni Düzenle", value=str(sel_not_row['not_icerik']), height=80, key=f"edt_text_{sel_not_id}")
+
+                            btn_n_col1, btn_n_col2 = st.columns(2)
+                            with btn_n_col1:
+                                if st.button("💾 Notu Güncelle", key=f"btn_upd_note_{sel_not_id}", type="primary", use_container_width=True):
+                                    if edt_n_text.strip():
+                                        cursor.execute("UPDATE dosya_notlari SET tarih = ?, not_icerik = ? WHERE id = ?", (str(edt_n_date), edt_n_text.strip(), sel_not_id))
+                                        conn.commit()
+                                        st.success("Not başarıyla güncellendi!")
+                                        st.rerun()
+                                    else:
+                                        st.warning("Not içeriği boş bırakılamaz.")
+                            with btn_n_col2:
+                                if st.button("🗑️ Bu Notu Sil", key=f"btn_del_note_{sel_not_id}", use_container_width=True):
+                                    cursor.execute("DELETE FROM dosya_notlari WHERE id = ?", (sel_not_id,))
+                                    conn.commit()
+                                    st.success("Not silindi!")
+                                    st.rerun()
+                        else:
+                            st.info("Bu dosyaya ait henüz kayıtlı bir not bulunmuyor.")
 
                     with t_rapor:
                         st.markdown("##### 📑 Executive Müvekkil Sunum Raporu (.xlsx)")
@@ -2140,6 +2184,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
             son_not = not_metinleri[0] if not_metinleri else "İşlem aşamasında."
 
             rapor_satirlari.append({
+                "dosya_id": d_id,
                 "Dosya No / Daire": f"{d_row['il']} {d_row['icra_dairesi']} {d_row['dosya_no']}",
                 "Borçlu(lar)": str(d_row['borclu']),
                 "Takip Türü": str(d_row.get('takip_turu', 'Örnek No: 7')),
@@ -2163,12 +2208,27 @@ elif menu == "Müvekkil Portföy & Raporlama":
             use_container_width=True,
             num_rows="dynamic",
             column_config={
+                "dosya_id": None,
                 "Başlangıç Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
                 "Tahsil Edilen": st.column_config.NumberColumn(format="%.2f TL"),
                 "Kalan Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
                 "Müvekkile Rapor Notu": st.column_config.TextColumn(width="large")
             }
         )
+
+        col_save_rep_btn, _ = st.columns([1, 1])
+        with col_save_rep_btn:
+            if st.button("💾 Düzenlenen Rapor Notlarını Dosya Geçmişine Kalıcı Kaydet", key=f"btn_save_report_notes_{secilen_muvekkil}"):
+                kaydedilen = 0
+                for _, r_item in edited_report.iterrows():
+                    d_id_val = r_item.get("dosya_id")
+                    cur_not_txt = str(r_item.get("Müvekkile Rapor Notu", "")).strip()
+                    if d_id_val and cur_not_txt:
+                        cursor.execute("INSERT INTO dosya_notlari (dosya_id, tarih, not_icerik) VALUES (?, ?, ?)", (int(d_id_val), str(date.today()), cur_not_txt))
+                        kaydedilen += 1
+                conn.commit()
+                st.success(f"✅ {kaydedilen} dosyanın rapor notu dosya geçmişine başarıyla kaydedildi!")
+                st.rerun()
 
         top_baslangic = float(edited_report["Başlangıç Asıl Alacak"].sum()) if not edited_report.empty else 0.0
         top_tahsilat = float(edited_report["Tahsil Edilen"].sum()) if not edited_report.empty else 0.0
