@@ -256,29 +256,80 @@ def parse_single_udf(file_bytes_or_path, filename=""):
             res["dosya_no"] = f"{fn_m.group(1)}/{fn_m.group(2)} E."
 
     # 2. İCRA DAİRESİ & İL/İLÇE TESPİTİ
-    if data_tag:
-        il_ilce_m = re.search(r'<il_Ilce>(.*?)</il_Ilce>', data_tag)
-        if il_ilce_m and il_ilce_m.group(1).strip():
-            matched_il, matched_ilce = find_location_match(il_ilce_m.group(1))
-            res["il"] = matched_il
-            res["ilce"] = matched_ilce
+    comb_xml = (xml_content or "") + " " + (data_tag or "")
 
-    daire_block_m = re.search(r'(?:T\.C\.\s*)?([^\n\r]+?)\s*(İCRA DAİRESİ|İCRA MÜDÜRLÜĞÜ|GENEL İCRA DAİRESİ|ESAS İCRA DAİRESİ)(?:[\'’]NE|[\'’]ne|[\'’]NA|[\'’]na)?', cdata, re.IGNORECASE)
+    # 2.1 Önce XML etiketlerinden birim ve il/ilçe ara
+    for tag in ['birimAdi', 'kurumBirimAdi', 'mahkemeBirimAdi', 'adliBirimAdi', 'icraDairesi', 'birim', 'kurumAdi', 'il_Ilce', 'adliYargiAdi']:
+        m_tag = re.search(rf'<{tag}[^>]*>(.*?)</{tag}>', comb_xml, re.IGNORECASE | re.DOTALL)
+        if m_tag and m_tag.group(1).strip():
+            tag_txt = m_tag.group(1).strip()
+            # İl / İlçe tespiti
+            if not res["il"] or res["il"] == "İzmir":
+                matched_il, matched_ilce = find_location_match(tag_txt)
+                if matched_il and (matched_il != "İzmir" or "izmir" in tr_lower(tag_txt)):
+                    res["il"] = matched_il
+                    res["ilce"] = matched_ilce
+
+            # Daire numarası tespiti
+            if not res["icra_dairesi"]:
+                n_m = re.search(r'(\d+)[\.\s\-\/]*(?:GENEL\s+|ESAS\s+|BANKA\s+|İFLAS\s+)?(?:İCRA|ICRA)', tag_txt, re.IGNORECASE)
+                if not n_m:
+                    n_m = re.search(r'(\d+)\s*(?:NO\'?LU|NOLU|NUMARALI)\s*(?:GENEL\s+|ESAS\s+)?(?:İCRA|ICRA)', tag_txt, re.IGNORECASE)
+                if n_m:
+                    res["icra_dairesi"] = f"{n_m.group(1)}. İcra Dairesi"
+                elif "gayrimenkul" in tr_lower(tag_txt):
+                    res["icra_dairesi"] = "Gayrimenkul Satış İcra Dairesi"
+                elif "genel icra" in tr_lower(tag_txt):
+                    res["icra_dairesi"] = "Genel İcra Dairesi"
+
+    # Eğer daireNo veya birimNo etiketi doğrudan varsa
+    if not res["icra_dairesi"]:
+        dno_m = re.search(r'<(?:daireNo|birimNo)>(\d+)</(?:daireNo|birimNo)>', comb_xml, re.IGNORECASE)
+        if dno_m:
+            res["icra_dairesi"] = f"{dno_m.group(1)}. İcra Dairesi"
+
+    # 2.2 CDATA Başlık ve İçerik Taraması (İlk 3500 karakter)
+    header_cdata = cdata[:3500] if cdata else ""
+
+    # Başlık bloğu ile il/ilçe tespiti
+    daire_block_m = re.search(r'(?:T\.C\.[\s\r\n]*)?([^\n\r]+?)[\s\r\n]*(İCRA DAİRESİ|İCRA MÜDÜRLÜĞÜ|GENEL İCRA DAİRESİ|ESAS İCRA DAİRESİ)(?:[\'’]NE|[\'’]ne|[\'’]NA|[\'’]na)?', header_cdata, re.IGNORECASE)
     if daire_block_m:
         raw_loc = daire_block_m.group(1).replace("T.C.", "").strip()
         matched_il, matched_ilce = find_location_match(raw_loc)
-        res["il"] = matched_il
-        res["ilce"] = matched_ilce
+        if matched_il and (not res["il"] or res["il"] == "İzmir" or "izmir" in tr_lower(raw_loc)):
+            res["il"] = matched_il
+            res["ilce"] = matched_ilce
+    else:
+        tc_m = re.search(r'T\.C\.[\s\r\n]+([^\n\r]+)[\s\r\n]+([^\n\r]+)', header_cdata, re.IGNORECASE)
+        if tc_m:
+            combined_tc = tc_m.group(1) + " " + tc_m.group(2)
+            matched_il, matched_ilce = find_location_match(combined_tc)
+            if matched_il:
+                res["il"] = matched_il
+                res["ilce"] = matched_ilce
 
-        num_m = re.search(r'(\d+)\.\s*İcra', daire_block_m.group(0), re.IGNORECASE)
-        if num_m:
-            res["icra_dairesi"] = f"{num_m.group(1)}. İcra Dairesi"
-        elif "Genel İcra" in daire_block_m.group(0):
+    # Daire numarası tespiti (CDATAdaki tüm kalıplar)
+    if not res["icra_dairesi"]:
+        num_patterns = [
+            r'(\d+)\s*[\.\s\-\/]+\s*(?:GENEL\s+|ESAS\s+|BANKA\s+|İFLAS\s+)?(?:İCRA|ICRA)\s*(?:DAİRESİ|DAIRESI|MÜDÜRLÜĞÜ|MUDURLUGU)',
+            r'(?:İCRA|ICRA)\s*(?:DAİRESİ|DAIRESI|MÜDÜRLÜĞÜ|MUDURLUGU)\s*[:\s\-]+(?:[A-ZÇĞİÖŞÜa-zçğıöşü\s]+?)?(\d+)',
+            r'(\d+)\s*(?:NO\'?LU|NOLU|NUMARALI)\s*(?:GENEL\s+|ESAS\s+)?(?:İCRA|ICRA)\s*(?:DAİRESİ|DAIRESI|MÜDÜRLÜĞÜ|MUDURLUGU)',
+            r'(\d+)\.[\s]*(?:İcra|icra|İCRA)\s*(?:Dairesi|Müdürlüğü)',
+            r'T\.C\.[\s\r\n]+[A-ZÇĞİÖŞÜa-zçğıöşü\s]+?[\s\r\n]+(\d+)[\.\s]+(?:GENEL\s+|ESAS\s+)?(?:İCRA|ICRA)'
+        ]
+        for pat in num_patterns:
+            n_m = re.search(pat, header_cdata, re.IGNORECASE)
+            if n_m:
+                res["icra_dairesi"] = f"{n_m.group(1)}. İcra Dairesi"
+                break
+
+    if not res["icra_dairesi"]:
+        if "gayrimenkul" in tr_lower(header_cdata):
+            res["icra_dairesi"] = "Gayrimenkul Satış İcra Dairesi"
+        elif "genel icra" in tr_lower(header_cdata):
             res["icra_dairesi"] = "Genel İcra Dairesi"
         else:
             res["icra_dairesi"] = "İcra Dairesi"
-    elif not res["icra_dairesi"]:
-        res["icra_dairesi"] = "İcra Dairesi"
 
     # 3. TAKİP TARİHİ TESPİTİ
     date_fn_m = re.search(r'(\d{2})_(\d{2})_(\d{4})', filename)
@@ -518,13 +569,23 @@ def merge_udf_list(file_results):
             merged["dosya_no"] = odeme_doc["dosya_no"]
             merged["yil"] = odeme_doc["yil"]
             merged["sira_no"] = odeme_doc["sira_no"]
-        if odeme_doc.get("il") and odeme_doc["il"] != "İzmir":
+        if odeme_doc.get("il") and (odeme_doc["il"] != "İzmir" or not merged.get("il")):
             merged["il"] = odeme_doc["il"]
             merged["ilce"] = odeme_doc["ilce"]
-        if odeme_doc.get("icra_dairesi"):
+        if odeme_doc.get("icra_dairesi") and odeme_doc["icra_dairesi"] != "İcra Dairesi":
             merged["icra_dairesi"] = odeme_doc["icra_dairesi"]
+        elif not merged.get("icra_dairesi") or merged["icra_dairesi"] == "İcra Dairesi":
+            if odeme_doc.get("icra_dairesi"):
+                merged["icra_dairesi"] = odeme_doc["icra_dairesi"]
         if odeme_doc.get("takip_turu"):
             merged["takip_turu"] = odeme_doc["takip_turu"]
+
+    # Eğer daire hala generic 'İcra Dairesi' kaldıysa, tüm belgeleri tara ve numaralı olanı bul
+    if merged.get("icra_dairesi") == "İcra Dairesi" or not merged.get("icra_dairesi"):
+        for d in file_results:
+            if d.get("icra_dairesi") and d["icra_dairesi"] != "İcra Dairesi":
+                merged["icra_dairesi"] = d["icra_dairesi"]
+                break
 
     # 2. Takip Açılış Tarihi: Kesinlikle Takip Talebi öncelikli!
     if talep_doc and talep_doc.get("takip_tarihi"):

@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import io
 import os
 import re
@@ -559,7 +559,6 @@ def hesapla_aralik_faizi(principal, start_date, end_date, faiz_turu, sabit_oran)
             if b_d <= cur_s <= e_d:
                 eslesen_oran = o
                 try:
-                    from datetime import timedelta
                     next_boundary = min(end_date, e_d + timedelta(days=1))
                 except Exception:
                     next_boundary = end_date
@@ -570,7 +569,6 @@ def hesapla_aralik_faizi(principal, start_date, end_date, faiz_turu, sabit_oran)
             toplam_faiz += (principal * (eslesen_oran / 100.0) * days_in_chunk) / 365.0
             cur_s = next_boundary
         else:
-            from datetime import timedelta
             cur_s = cur_s + timedelta(days=1)
             
     return toplam_faiz
@@ -1297,8 +1295,23 @@ if menu == "Dosya Arama & Çalışma Masası":
     st.markdown(f"<h2 style='color:{accent_green}; margin-bottom: 4px;'>🗂️ İcra Dosyaları Çalışma Masası</h2>", unsafe_allow_html=True)
     st.caption("Derdest icra dosyalarınızı filtreleyin, üzerine tıklayarak canlı hesap cetvelini ve işlem panelini açın.")
     
-    tum_dosyalar = pd.read_sql_query("SELECT id, ana_para, takip_cikisi, vekalet_ucreti, itiraz_edildi, kesinlesme_durumu FROM dosyalar", conn)
-    tum_tahsilatlar = pd.read_sql_query("SELECT tutar FROM tahsilatlar", conn)
+@st.cache_data(ttl=30)
+def get_cached_dosyalar_kpi():
+    try:
+        t_dosyalar = pd.read_sql_query("SELECT id, ana_para, takip_cikisi, vekalet_ucreti, itiraz_edildi, kesinlesme_durumu, durum FROM dosyalar", conn)
+        t_tahsilatlar = pd.read_sql_query("SELECT tutar FROM tahsilatlar", conn)
+        return t_dosyalar, t_tahsilatlar
+    except Exception:
+        return pd.DataFrame(), pd.DataFrame()
+
+# -------------------------------------------------------------
+# 8. MODÜL 1: ÇALIŞMA MASASI & ARAMA MOTORU
+# -------------------------------------------------------------
+if menu == "Dosya Arama & Çalışma Masası":
+    st.markdown(f"<h2 style='color:{accent_green}; margin-bottom: 4px;'>🗂️ İcra Dosyaları Çalışma Masası</h2>", unsafe_allow_html=True)
+    st.caption("Derdest icra dosyalarınızı filtreleyin, üzerine tıklayarak canlı hesap cetvelini ve işlem panelini açın.")
+    
+    tum_dosyalar, tum_tahsilatlar = get_cached_dosyalar_kpi()
     
     toplam_dosya_sayisi = len(tum_dosyalar)
     itirazli_sayisi = len(tum_dosyalar[tum_dosyalar['itiraz_edildi'] == 1]) if not tum_dosyalar.empty else 0
@@ -1336,11 +1349,10 @@ if menu == "Dosya Arama & Çalışma Masası":
             for k in list(st.session_state.keys()):
                 if k.startswith("ch_haric_"):
                     st.session_state[k] = global_ch_haric
-            st.rerun()
         st.session_state["global_ch_haric"] = global_ch_haric
 
-    # Hızlı Durum Filtre Çipleri
-    f_col1, f_col2, f_col3, f_col4 = st.columns(4)
+    # Hızlı Durum Filtre Çipleri (5 Seçenek: Tümü, İtirazlılar, Kesinleşenler, Bekleyenler, Kapalı/İnfaz)
+    f_col1, f_col2, f_col3, f_col4, f_col5 = st.columns(5)
     aktif_filtre = st.session_state.get("dosya_tab_filtre", "Tümü")
     if f_col1.button(f"📁 Tümü ({toplam_dosya_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "Tümü" else "secondary"):
         st.session_state["dosya_tab_filtre"] = "Tümü"
@@ -1356,9 +1368,13 @@ if menu == "Dosya Arama & Çalışma Masası":
     if f_col4.button(f"⏳ Bekleyenler ({bekleyen_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "Bekleyen" else "secondary"):
         st.session_state["dosya_tab_filtre"] = "Bekleyen"
         st.rerun()
+    kapali_sayisi = len(tum_dosyalar[tum_dosyalar['durum'].astype(str).str.contains("Kapatıldı|İnfaz|Kapalı", case=False, na=False)]) if not tum_dosyalar.empty else 0
+    if f_col5.button(f"🔒 Kapalı / İnfaz ({kapali_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "Kapalı" else "secondary"):
+        st.session_state["dosya_tab_filtre"] = "Kapalı"
+        st.rerun()
 
-    with st.expander("⚙️ Detaylı Filtreler (İl, İlçe, Daire, Taraf Seçimi)", expanded=False):
-        col1, col2, col3 = st.columns(3)
+    with st.expander("⚙️ Detaylı Filtreler (İl, İlçe, Daire, Taraf, Statü)", expanded=False):
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             il_filtre = st.selectbox("İl Filtresi", ["Tümü"] + list(TURKIYE_IL_ILCE.keys()))
             ara_daire = st.selectbox("İcra Dairesi", ["Tümü"] + ICRA_DAIRE_LISTESI)
@@ -1369,6 +1385,8 @@ if menu == "Dosya Arama & Çalışma Masası":
         with col3:
             ara_alacakli = st.selectbox("Alacaklı (Müvekkil)", ["Tümü"] + taraflar_list)
             ara_borclu = st.selectbox("Borçlu Firma / Kişi", ["Tümü"] + taraflar_list)
+        with col4:
+            ara_durum = st.selectbox("Dosya Statüsü", ["Tümü", "Açık / Derdest Dosyalar", "Kapatıldı / İnfaz", "Protokol Yapıldı", "İflas"])
 
     query = "SELECT * FROM dosyalar WHERE 1=1"
     params = []
@@ -1381,6 +1399,17 @@ if menu == "Dosya Arama & Çalışma Masası":
         query += " AND kesinlesme_durumu = 1"
     elif aktif_filtre == "Bekleyen":
         query += " AND kesinlesme_durumu = 0 AND itiraz_edildi = 0"
+    elif aktif_filtre == "Kapalı":
+        query += " AND (durum LIKE '%Kapatıldı%' OR durum LIKE '%İnfaz%' OR durum LIKE '%Kapalı%')"
+    
+    if ara_durum == "Açık / Derdest Dosyalar":
+        query += " AND (durum IS NULL OR (durum NOT LIKE '%Kapatıldı%' AND durum NOT LIKE '%İnfaz%' AND durum NOT LIKE '%Kapalı%'))"
+    elif ara_durum == "Kapatıldı / İnfaz":
+        query += " AND (durum LIKE '%Kapatıldı%' OR durum LIKE '%İnfaz%' OR durum LIKE '%Kapalı%')"
+    elif ara_durum != "Tümü":
+        query += " AND durum = ?"
+        params.append(ara_durum)
+
     if il_filtre != "Tümü":
         query += " AND il = ?"
         params.append(il_filtre)
@@ -1532,7 +1561,6 @@ if menu == "Dosya Arama & Çalışma Masası":
             if clicked_row != last_clicked:
                 st.session_state["last_clicked_df_row"] = clicked_row
                 st.session_state["aktif_dosya_id"] = int(df.iloc[clicked_row]['id'])
-                st.rerun()
 
         if "aktif_dosya_id" in st.session_state and st.session_state["aktif_dosya_id"]:
             secili_id = st.session_state["aktif_dosya_id"]
@@ -1543,15 +1571,23 @@ if menu == "Dosya Arama & Çalışma Masası":
             if not secili_dosya_rows.empty:
                 secili_dosya = secili_dosya_rows.iloc[0]
 
-                tahsilat_df = pd.read_sql_query("SELECT id, tarih, tutar, aciklama FROM tahsilatlar WHERE dosya_id = ? ORDER BY tarih ASC", conn, params=[secili_id])
-                masraf_df = pd.read_sql_query("SELECT id, tarih, aciklama, masraf_tutari, iade_tutari FROM masraflar WHERE dosya_id = ? ORDER BY tarih ASC", conn, params=[secili_id])
+                tahsilat_df = tahsilat_groups.get(secili_id)
+                if tahsilat_df is None:
+                    tahsilat_df = pd.read_sql_query("SELECT id, tarih, tutar, aciklama FROM tahsilatlar WHERE dosya_id = ? ORDER BY tarih ASC", conn, params=[secili_id])
+                
+                masraf_df = masraf_groups.get(secili_id)
+                if masraf_df is None:
+                    masraf_df = pd.read_sql_query("SELECT id, tarih, aciklama, masraf_tutari, iade_tutari FROM masraflar WHERE dosya_id = ? ORDER BY tarih ASC", conn, params=[secili_id])
+                
+                ak_df = ak_groups.get(secili_id)
+                if ak_df is None:
+                    ak_df = pd.read_sql_query("SELECT id, kalem_adi, kalem_turu, tutar, t_oncesi_faiz, faiz_turu, faiz_orani, sorumlu_borclular FROM alacak_kalemleri WHERE dosya_id = ?", conn, params=[secili_id])
+                
                 notlar_df = pd.read_sql_query("SELECT id, tarih, not_icerik FROM dosya_notlari WHERE dosya_id = ? ORDER BY tarih DESC", conn, params=[secili_id])
                 
                 top_masraf = masraf_df['masraf_tutari'].sum() if not masraf_df.empty else 0.0
                 top_iade = masraf_df['iade_tutari'].sum() if not masraf_df.empty else 0.0
                 net_masraf = top_masraf - top_iade
-
-                ak_df = pd.read_sql_query("SELECT id, kalem_adi, kalem_turu, tutar, t_oncesi_faiz, faiz_turu, faiz_orani, sorumlu_borclular FROM alacak_kalemleri WHERE dosya_id = ?", conn, params=[secili_id])
 
                 rem_p, rem_i, tot_pay, mahsup_list, rem_pre_i, rem_post_i = hesapla_kademeli_dosya_hesabi(
                     secili_dosya['ana_para'], secili_dosya['faiz_orani'], secili_dosya['takip_tarihi'], secili_dosya['t_oncesi_faiz'], tahsilat_df,
