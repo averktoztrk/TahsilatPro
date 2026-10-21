@@ -470,6 +470,67 @@ def get_cached_taraflar_list():
     except Exception:
         return []
 
+def check_existing_dosya(db_cursor, il, ilce, daire, secilen_yil, esas_sira_no):
+    """
+    Belirtilen il, ilçe, icra dairesi ve dosya/esas numarasına göre sistemde
+    mükerrer dosya bulunup bulunmadığını denetler.
+    Bulursa sözlük olarak dosya bilgilerini döndürür, bulamazsa None döner.
+    """
+    if not esas_sira_no or not str(esas_sira_no).strip():
+        return None
+    sira_raw = str(esas_sira_no).strip()
+    clean_sira = re.sub(r'[^0-9]', '', sira_raw)
+    yil = str(secilen_yil).strip() if secilen_yil else "2026"
+
+    patterns = set()
+    if clean_sira:
+        patterns.add(f"{yil}/{clean_sira} E.")
+        patterns.add(f"{yil}/{clean_sira}")
+        patterns.add(f"{yil}/{clean_sira} E")
+    patterns.add(f"{yil}/{sira_raw} E.")
+    patterns.add(f"{yil}/{sira_raw}")
+    if sira_raw.endswith(" E.") or sira_raw.endswith(" E"):
+        patterns.add(sira_raw)
+
+    m_esas = re.search(r'(?:(\d{4})[/_])?(\d+)', sira_raw)
+    if m_esas:
+        ext_yil = m_esas.group(1) or yil
+        ext_sira = m_esas.group(2)
+        patterns.add(f"{ext_yil}/{ext_sira} E.")
+        patterns.add(f"{ext_yil}/{ext_sira}")
+    
+    pat_list = list(patterns)
+    placeholders = ", ".join(["?"] * len(pat_list))
+    sql = f"""
+        SELECT id, il, ilce, icra_dairesi, dosya_no, alacakli, borclu, takip_tarihi, ana_para, takip_cikisi
+        FROM dosyalar
+        WHERE il = ? AND icra_dairesi = ? AND dosya_no IN ({placeholders})
+    """
+    params = [il, daire] + pat_list
+    try:
+        db_cursor.execute(sql, params)
+        rows = db_cursor.fetchall()
+        for r in rows:
+            r_ilce = r[2] or "Merkez"
+            # İstanbul'da adliye ayrımı (Çağlayan vs Anadolu) ilçe üzerinden yapılır
+            if il == "İstanbul":
+                if r_ilce == ilce:
+                    return {
+                        "id": r[0], "il": r[1], "ilce": r[2], "icra_dairesi": r[3],
+                        "dosya_no": r[4], "alacakli": r[5], "borclu": r[6],
+                        "takip_tarihi": r[7], "ana_para": r[8], "takip_cikisi": r[9]
+                    }
+            else:
+                if ilce == "Merkez" or r_ilce == "Merkez" or r_ilce == ilce:
+                    return {
+                        "id": r[0], "il": r[1], "ilce": r[2], "icra_dairesi": r[3],
+                        "dosya_no": r[4], "alacakli": r[5], "borclu": r[6],
+                        "takip_tarihi": r[7], "ana_para": r[8], "takip_cikisi": r[9]
+                    }
+    except Exception as e:
+        print(f"check_existing_dosya hatası: {e}")
+    return None
+
 def hesapla_aralik_faizi(principal, start_date, end_date, faiz_turu, sabit_oran):
     if principal <= 0 or start_date >= end_date:
         return 0.0
@@ -1475,6 +1536,8 @@ if menu == "Dosya Arama & Çalışma Masası":
         if "aktif_dosya_id" in st.session_state and st.session_state["aktif_dosya_id"]:
             secili_id = st.session_state["aktif_dosya_id"]
             secili_dosya_rows = df[df['id'] == secili_id]
+            if secili_dosya_rows.empty:
+                secili_dosya_rows = pd.read_sql_query("SELECT * FROM dosyalar WHERE id = ?", conn, params=[secili_id])
             
             if not secili_dosya_rows.empty:
                 secili_dosya = secili_dosya_rows.iloc[0]
@@ -2311,6 +2374,38 @@ elif menu == "Yeni Dosya Açılışı":
     udf_aktif = st.session_state.get("udf_data", None)
 
     if udf_aktif:
+        udf_dup_file = check_existing_dosya(
+            cursor, 
+            udf_aktif.get("il"), 
+            udf_aktif.get("ilce"), 
+            udf_aktif.get("icra_dairesi"), 
+            udf_aktif.get("yil"), 
+            udf_aktif.get("sira_no")
+        )
+        if udf_dup_file:
+            st.markdown(f"""
+            <div style="background: rgba(239, 68, 68, 0.12); border: 2px solid #EF4444; border-radius: 8px; padding: 12px 16px; margin-bottom: 14px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span style="font-weight: 700; color: #EF4444; font-size: 14px;">⚠️ MÜKERRER DOSYA UYARISI: Bu Belge Sistemde Zaten Kayıtlı!</span>
+                    <span style="font-size: 11.5px; font-weight: 600; color: #EF4444; background: rgba(239, 68, 68, 0.18); padding: 2px 8px; border-radius: 4px;">Kayıt No: #{udf_dup_file['id']}</span>
+                </div>
+                <div style="font-size: 12.5px; line-height: 1.6;">
+                    Yüklenen UDF belgesi (<b>{udf_dup_file['il']} {udf_dup_file['ilce']} / {udf_dup_file['icra_dairesi']} - {udf_dup_file['dosya_no']}</b>) sistemde mevcuttur.<br>
+                    👤 <b>Mevcut Alacaklı:</b> {udf_dup_file['alacakli']} &nbsp;|&nbsp; 👥 <b>Borçlu:</b> {udf_dup_file['borclu']}<br>
+                    📅 <b>Takip Açılışı:</b> {udf_dup_file['takip_tarihi']} &nbsp;|&nbsp; 💰 <b>Takip Çıkışı:</b> {format_tr_money(udf_dup_file['takip_cikisi'])}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            col_u_dup1, col_u_dup2 = st.columns([1, 2])
+            with col_u_dup1:
+                if st.button("🔍 Kayıtlı Dosyaya Git & İncele", key="btn_goto_udf_dup", use_container_width=True, type="primary"):
+                    st.session_state["nav_menu_radio"] = "Dosya Arama & Çalışma Masası"
+                    st.session_state["dosya_tab_filtre"] = "Tümü"
+                    st.session_state["aktif_dosya_id"] = udf_dup_file["id"]
+                    st.rerun()
+            with col_u_dup2:
+                st.caption("ℹ️ Dosya numarasını veya icra dairesini değiştirerek devam edebilir veya mevcut dosyayı açabilirsiniz.")
+
         st.markdown(f"""
         <div style="background: rgba(16, 185, 129, 0.08); border: 1.5px solid #10B981; border-radius: 8px; padding: 12px 16px; margin-bottom: 18px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
@@ -2388,6 +2483,18 @@ elif menu == "Yeni Dosya Açılışı":
             
             tam_dosya_no = f"{secilen_yil}/{esas_sira_no} E." if esas_sira_no else ""
             takip_tarihi = st.date_input("Takip Açılış Tarihi", value=def_tarih)
+
+            existing_file = check_existing_dosya(cursor, secilen_il, secilen_ilce, secilen_daire, secilen_yil, esas_sira_no)
+            if existing_file:
+                st.markdown(f"""
+                <div style="background: rgba(239, 68, 68, 0.12); border: 1.5px solid #EF4444; border-radius: 6px; padding: 8px 12px; margin-top: 8px; margin-bottom: 8px;">
+                    <span style="font-weight: 700; color: #EF4444; font-size: 12px;">⚠️ Bu dosya sistemde zaten kayıtlı (#{existing_file['id']})</span>
+                    <div style="font-size: 11px; margin-top: 2px;">
+                        <b>{existing_file['dosya_no']}</b> - {existing_file['icra_dairesi']}<br>
+                        {existing_file['alacakli'][:30]}... / {existing_file['borclu'][:30]}...
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
         with c2:
             alacakli = st.selectbox("Alacaklı (Müvekkil Cari)", taraflar_list, index=idx_alc)
@@ -2493,9 +2600,41 @@ elif menu == "Yeni Dosya Açılışı":
 
         st.info(f"📊 **Toplam Asıl Alacak:** {format_tr_money(calc_anapara)} | **Takip Öncesi Faiz:** {format_tr_money(calc_toncesi)} | **Takip Çıkışı:** {format_tr_money(takip_cikisi_hesap)} | **Sabit İcra Vekalet:** {format_tr_money(hesaplanan_vekalet)} | **Tahsil Harcı:** {format_tr_money(tahsil_harci_tahmini)} (%{yeni_th_oran:.2f})")
 
+        allow_duplicate_save = False
+        if existing_file:
+            st.error(
+                f"🚨 **DİKKAT: MÜKERRER DOSYA TESPİT EDİLDİ!**\n\n"
+                f"**{existing_file['il']} {existing_file['ilce']} / {existing_file['icra_dairesi']} - {existing_file['dosya_no']}** esas sayılı dosya sistemde zaten mevcuttur.\n\n"
+                f"• **Kayıtlı Alacaklı:** {existing_file['alacakli']}\n\n"
+                f"• **Kayıtlı Borçlu:** {existing_file['borclu']}\n\n"
+                f"• **Takip Açılış:** {existing_file['takip_tarihi']} &nbsp;|&nbsp; **Takip Çıkışı:** {format_tr_money(existing_file['takip_cikisi'])}"
+            )
+            col_dup1, col_dup2 = st.columns([1, 2])
+            with col_dup1:
+                if st.button("🔍 Mevcut Dosyayı Aç & Çalış", key="btn_goto_existing_form", use_container_width=True, type="primary"):
+                    st.session_state["nav_menu_radio"] = "Dosya Arama & Çalışma Masası"
+                    st.session_state["dosya_tab_filtre"] = "Tümü"
+                    st.session_state["aktif_dosya_id"] = existing_file["id"]
+                    st.rerun()
+            with col_dup2:
+                allow_duplicate_save = st.checkbox(
+                    "⚠️ Mükerrer kayda izin ver (Aynı esas no ile yeni dosya açmak istiyorum)",
+                    value=False,
+                    key="chk_allow_duplicate_save",
+                    help="İstisnai bir durumda aynı esas numarası ve daire ile mükerrer dosya kaydetmek istiyorsanız bu kutucuğu işaretleyin."
+                )
+
         st.write("")
-        if st.button("💾 Dosyayı ve Kalemleri Kaydet", type="primary", use_container_width=True):
-            if esas_sira_no and borclu_metni and takip_cikisi_hesap > 0:
+        btn_label = "💾 Dosyayı ve Kalemleri Kaydet"
+        btn_type = "primary"
+        if existing_file and not allow_duplicate_save:
+            btn_label = "🚫 Mükerrer Dosya - Kayıt Engellendi"
+            btn_type = "secondary"
+
+        if st.button(btn_label, type=btn_type, use_container_width=True):
+            if existing_file and not allow_duplicate_save:
+                st.error(f"⛔ Mükerrer dosya kaydı engellendi! '{existing_file['dosya_no']}' esas numarası ile '{existing_file['icra_dairesi']}' dairesinde zaten kayıtlı bir dosya bulunmaktadır. Dosyayı görüntülemek için 'Mevcut Dosyayı Aç & Çalış' butonuna tıklayabilir veya istisnai bir durum varsa yukarıdaki onay kutucuğunu işaretleyebilirsiniz.")
+            elif esas_sira_no and borclu_metni and takip_cikisi_hesap > 0:
                 primary_faiz_turu = secilen_toplu_faiz
                 primary_faiz_orani = secilen_toplu_oran
 
