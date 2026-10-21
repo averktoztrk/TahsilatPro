@@ -2041,170 +2041,203 @@ elif menu == "Müvekkil Portföy & Raporlama":
 
         st.markdown(f"**{secilen_muvekkil}** cari kartına bağlı toplam **{len(m_dosyalar)}** adet icra dosyası tespit edildi.")
 
-        if st.button("🚀 Tek Sayfa Konsolide Özet Raporu İndir (.xlsx)", type="primary"):
-            wb_c = openpyxl.Workbook()
-            
-            fill_header = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
-            fill_sub = PatternFill(start_color="1F2421", end_color="1F2421", fill_type="solid")
-            fill_zebra = PatternFill(start_color="F4F6F5", end_color="F4F6F5", fill_type="solid")
-            fill_total = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
+        m_ids = tuple(m_dosyalar['id'].tolist()) if len(m_dosyalar) > 1 else f"({m_dosyalar['id'].iloc[0]})"
+        m_all_t = pd.read_sql_query(f"SELECT id, dosya_id, tarih, tutar, aciklama FROM tahsilatlar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
+        m_all_m = pd.read_sql_query(f"SELECT id, dosya_id, masraf_tutari, iade_tutari FROM masraflar WHERE dosya_id IN {m_ids}", conn)
+        m_all_n = pd.read_sql_query(f"SELECT id, dosya_id, tarih, not_icerik FROM dosya_notlari WHERE dosya_id IN {m_ids} ORDER BY tarih DESC", conn)
+        m_all_ak = pd.read_sql_query(f"SELECT id, dosya_id, kalem_adi, tutar, t_oncesi_faiz, faiz_turu, faiz_orani FROM alacak_kalemleri WHERE dosya_id IN {m_ids}", conn)
 
-            font_title = Font(name="Arial", size=13, bold=True, color="FFFFFF")
-            font_sub = Font(name="Arial", size=10, bold=True, color="FFFFFF")
-            font_bold = Font(name="Arial", size=10, bold=True, color="000000")
-            font_reg = Font(name="Arial", size=10, color="000000")
-            font_total = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+        m_t_grp = dict(tuple(m_all_t.groupby("dosya_id"))) if not m_all_t.empty else {}
+        m_m_grp = dict(tuple(m_all_m.groupby("dosya_id"))) if not m_all_m.empty else {}
+        m_n_grp = dict(tuple(m_all_n.groupby("dosya_id"))) if not m_all_n.empty else {}
+        m_ak_grp = dict(tuple(m_all_ak.groupby("dosya_id"))) if not m_all_ak.empty else {}
 
-            thin_border = Border(
-                left=Side(style='thin', color='D1D5DB'), right=Side(style='thin', color='D1D5DB'),
-                top=Side(style='thin', color='D1D5DB'), bottom=Side(style='thin', color='D1D5DB')
+        m_emp_t = pd.DataFrame(columns=["id", "dosya_id", "tarih", "tutar", "aciklama"])
+        m_emp_m = pd.DataFrame(columns=["id", "dosya_id", "masraf_tutari", "iade_tutari"])
+        m_emp_n = pd.DataFrame(columns=["id", "dosya_id", "tarih", "not_icerik"])
+        m_emp_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani"])
+
+        rapor_satirlari = []
+        for _, d_row in m_dosyalar.iterrows():
+            d_id = int(d_row['id'])
+            t_df = m_t_grp.get(d_id, m_emp_t)
+            m_df = m_m_grp.get(d_id, m_emp_m)
+            n_df = m_n_grp.get(d_id, m_emp_n)
+            m_ak_df = m_ak_grp.get(d_id, m_emp_ak)
+
+            rem_p, rem_i, tot_pay, *_ = hesapla_kademeli_dosya_hesabi(
+                d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], t_df,
+                faiz_turu=d_row.get('faiz_turu', 'Özel Oran'),
+                masraflar_df=m_df,
+                alacak_kalemleri_df=m_ak_df
             )
 
-            ws_c = wb_c.active
-            ws_c.title = "Müvekkil Durum Özeti"
-            ws_c.views.sheetView[0].showGridLines = True
+            not_metinleri = [nr['not_icerik'] for _, nr in n_df.iterrows()]
+            son_not = not_metinleri[0] if not_metinleri else "İşlem aşamasında."
 
-            ws_c.merge_cells("A1:G1")
-            ws_c["A1"] = f"JUS LEGAL | {secilen_muvekkil.upper()} İCRA PORTFÖYÜ DURUM ÖZETİ"
-            ws_c["A1"].font = font_title
-            ws_c["A1"].fill = fill_header
-            ws_c["A1"].alignment = Alignment(horizontal="center", vertical="center")
-            ws_c.row_dimensions[1].height = 36
+            rapor_satirlari.append({
+                "Dosya No / Daire": f"{d_row['il']} {d_row['icra_dairesi']} {d_row['dosya_no']}",
+                "Borçlu(lar)": str(d_row['borclu']),
+                "Takip Türü": str(d_row.get('takip_turu', 'Örnek No: 7')),
+                "Başlangıç Asıl Alacak": float(d_row['ana_para']),
+                "Tahsil Edilen": float(tot_pay),
+                "Kalan Asıl Alacak": float(rem_p),
+                "Dosya Statüsü": f"{d_row['durum']} ({'İtirazlı' if d_row['itiraz_edildi']==1 else 'Normal'})",
+                "Müvekkile Rapor Notu": son_not
+            })
 
-            ws_c.merge_cells("A2:G2")
-            ws_c["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Derdest Dosya: {len(m_dosyalar)}"
-            ws_c["A2"].font = Font(name="Arial", size=9, italic=True, color="334155")
-            ws_c["A2"].alignment = Alignment(horizontal="center", vertical="center")
-            ws_c.row_dimensions[2].height = 20
+        df_rapor = pd.DataFrame(rapor_satirlari)
 
-            headers_c = [
-                "Dosya No / İcra Dairesi", 
-                "Borçlu(lar)", 
-                "Takip Türü", 
-                "Toplam Alacak (Bakiye)", 
-                "Toplam Tahsil Edilen", 
-                "Dosya Statüsü", 
-                "Dosya Notları / Son Durum"
+        st.write("")
+        st.markdown(f"#### 📝 {secilen_muvekkil} - Düzenlenebilir Durum Raporu")
+        st.caption("Tablodaki hücrelere doğrudan tıklayarak açıklamaları, statüleri veya tutarları müvekkile sunmadan önce dilediğiniz gibi düzenleyebilirsiniz. Yapılan düzenlemeler Excel çıktısına birebir yansır.")
+
+        editor_key = f"rapor_editor_{secilen_muvekkil}"
+        edited_report = st.data_editor(
+            df_rapor,
+            key=editor_key,
+            use_container_width=True,
+            num_rows="dynamic",
+            column_config={
+                "Başlangıç Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
+                "Tahsil Edilen": st.column_config.NumberColumn(format="%.2f TL"),
+                "Kalan Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
+                "Müvekkile Rapor Notu": st.column_config.TextColumn(width="large")
+            }
+        )
+
+        top_baslangic = float(edited_report["Başlangıç Asıl Alacak"].sum()) if not edited_report.empty else 0.0
+        top_tahsilat = float(edited_report["Tahsil Edilen"].sum()) if not edited_report.empty else 0.0
+        top_kalan = float(edited_report["Kalan Asıl Alacak"].sum()) if not edited_report.empty else 0.0
+
+        st.write("")
+        rk1, rk2, rk3, rk4 = st.columns(4)
+        rk1.metric("Toplam Dosya", f"{len(edited_report)} Adet")
+        rk2.metric("Portföy Asıl Alacak", format_tr_money(top_baslangic))
+        rk3.metric("Tahsil Edilen Tutar", format_tr_money(top_tahsilat))
+        rk4.metric("Kalan Müvekkil Alacağı", format_tr_money(top_kalan))
+
+        # Excel Export of the Edited Data
+        wb_c = openpyxl.Workbook()
+        ws_c = wb_c.active
+        ws_c.title = "Müvekkil Durum Özeti"
+        ws_c.views.sheetView[0].showGridLines = True
+
+        fill_header = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
+        fill_sub = PatternFill(start_color="1F2421", end_color="1F2421", fill_type="solid")
+        fill_zebra = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+        fill_total = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
+
+        font_title = Font(name="Arial", size=13, bold=True, color="FFFFFF")
+        font_sub = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        font_reg = Font(name="Arial", size=10, color="000000")
+        font_total = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+
+        thin_border = Border(
+            left=Side(style='thin', color='D1D5DB'), right=Side(style='thin', color='D1D5DB'),
+            top=Side(style='thin', color='D1D5DB'), bottom=Side(style='thin', color='D1D5DB')
+        )
+
+        ws_c.merge_cells("A1:H1")
+        ws_c["A1"] = f"JUS LEGAL | {secilen_muvekkil.upper()} İCRA PORTFÖYÜ DURUM RAPORU"
+        ws_c["A1"].font = font_title
+        ws_c["A1"].fill = fill_header
+        ws_c["A1"].alignment = Alignment(horizontal="center", vertical="center")
+        ws_c.row_dimensions[1].height = 36
+
+        ws_c.merge_cells("A2:H2")
+        ws_c["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Dosya: {len(edited_report)}"
+        ws_c["A2"].font = Font(name="Arial", size=9, italic=True, color="334155")
+        ws_c["A2"].alignment = Alignment(horizontal="center", vertical="center")
+        ws_c.row_dimensions[2].height = 20
+
+        headers_c = [
+            "Dosya No / İcra Dairesi", 
+            "Borçlu Firma / Kişi", 
+            "Takip Türü", 
+            "Asıl Alacak", 
+            "Tahsil Edilen", 
+            "Kalan Asıl Alacak", 
+            "Dosya Statüsü", 
+            "Müvekkile Rapor Notu / Son Durum"
+        ]
+
+        for c_i, h_txt in enumerate(headers_c, start=1):
+            c = ws_c.cell(row=4, column=c_i, value=h_txt)
+            c.fill = fill_sub
+            c.font = font_sub
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = thin_border
+        ws_c.row_dimensions[4].height = 26
+
+        row_p = 5
+        for _, row_data in edited_report.iterrows():
+            vals = [
+                str(row_data["Dosya No / Daire"]),
+                str(row_data["Borçlu(lar)"]),
+                str(row_data["Takip Türü"]),
+                float(row_data["Başlangıç Asıl Alacak"]),
+                float(row_data["Tahsil Edilen"]),
+                float(row_data["Kalan Asıl Alacak"]),
+                str(row_data["Dosya Statüsü"]),
+                str(row_data["Müvekkile Rapor Notu"])
             ]
+            for col_idx, val in enumerate(vals, start=1):
+                cell = ws_c.cell(row=row_p, column=col_idx, value=val)
+                cell.font = font_reg
+                cell.border = thin_border
+                if isinstance(val, (float, int)) and col_idx in [4, 5, 6]:
+                    cell.number_format = '#,##0.00 "TL"'
+                    cell.alignment = Alignment(horizontal="right", vertical="top")
+                else:
+                    cell.alignment = Alignment(horizontal="center" if col_idx in [1, 3, 7] else "left", vertical="top", wrap_text=(col_idx == 8))
+                if row_p % 2 == 1:
+                    cell.fill = fill_zebra
+            ws_c.row_dimensions[row_p].height = 36
+            row_p += 1
 
-            for c_i, h_txt in enumerate(headers_c, start=1):
-                c = ws_c.cell(row=4, column=c_i, value=h_txt)
-                c.fill = fill_sub
-                c.font = font_sub
-                c.alignment = Alignment(horizontal="center", vertical="center")
-                c.border = thin_border
-            ws_c.row_dimensions[4].height = 26
+        ws_c.cell(row=row_p, column=1, value="TOPLAM PORTFÖY ÖZETİ").font = font_total
+        ws_c.merge_cells(start_row=row_p, start_column=1, end_row=row_p, end_column=3)
 
-            toplam_borc_genel = 0
-            toplam_tahsilat_genel = 0
+        totals_map = {
+            4: top_baslangic,
+            5: top_tahsilat,
+            6: top_kalan
+        }
 
-            m_ids = tuple(m_dosyalar['id'].tolist()) if len(m_dosyalar) > 1 else f"({m_dosyalar['id'].iloc[0]})"
-            m_all_t = pd.read_sql_query(f"SELECT id, dosya_id, tarih, tutar, aciklama FROM tahsilatlar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
-            m_all_m = pd.read_sql_query(f"SELECT id, dosya_id, masraf_tutari, iade_tutari FROM masraflar WHERE dosya_id IN {m_ids}", conn)
-            m_all_n = pd.read_sql_query(f"SELECT id, dosya_id, tarih, not_icerik FROM dosya_notlari WHERE dosya_id IN {m_ids} ORDER BY tarih DESC", conn)
-            m_all_ak = pd.read_sql_query(f"SELECT id, dosya_id, kalem_adi, tutar, t_oncesi_faiz, faiz_turu, faiz_orani FROM alacak_kalemleri WHERE dosya_id IN {m_ids}", conn)
+        for col_idx in range(1, 9):
+            c_tot = ws_c.cell(row=row_p, column=col_idx)
+            c_tot.fill = fill_total
+            c_tot.font = font_total
+            c_tot.border = thin_border
+            if col_idx in totals_map:
+                c_tot.value = totals_map[col_idx]
+                c_tot.number_format = '#,##0.00 "TL"'
+                c_tot.alignment = Alignment(horizontal="right", vertical="center")
+        ws_c.row_dimensions[row_p].height = 28
 
-            m_t_grp = dict(tuple(m_all_t.groupby("dosya_id"))) if not m_all_t.empty else {}
-            m_m_grp = dict(tuple(m_all_m.groupby("dosya_id"))) if not m_all_m.empty else {}
-            m_n_grp = dict(tuple(m_all_n.groupby("dosya_id"))) if not m_all_n.empty else {}
-            m_ak_grp = dict(tuple(m_all_ak.groupby("dosya_id"))) if not m_all_ak.empty else {}
+        ws_c.column_dimensions["A"].width = 28
+        ws_c.column_dimensions["B"].width = 26
+        ws_c.column_dimensions["C"].width = 24
+        ws_c.column_dimensions["D"].width = 20
+        ws_c.column_dimensions["E"].width = 20
+        ws_c.column_dimensions["F"].width = 20
+        ws_c.column_dimensions["G"].width = 20
+        ws_c.column_dimensions["H"].width = 50
 
-            m_emp_t = pd.DataFrame(columns=["id", "dosya_id", "tarih", "tutar", "aciklama"])
-            m_emp_m = pd.DataFrame(columns=["id", "dosya_id", "masraf_tutari", "iade_tutari"])
-            m_emp_n = pd.DataFrame(columns=["id", "dosya_id", "tarih", "not_icerik"])
-            m_emp_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani"])
+        buf_c = io.BytesIO()
+        wb_c.save(buf_c)
+        buf_c.seek(0)
 
-            for _, d_row in m_dosyalar.iterrows():
-                d_id = int(d_row['id'])
-                t_df = m_t_grp.get(d_id, m_emp_t)
-                m_df = m_m_grp.get(d_id, m_emp_m)
-                n_df = m_n_grp.get(d_id, m_emp_n)
-                m_ak_df = m_ak_grp.get(d_id, m_emp_ak)
-
-                t_masraf = m_df['masraf_tutari'].sum() if not m_df.empty else 0.0
-                t_iade = m_df['iade_tutari'].sum() if not m_df.empty else 0.0
-                n_masraf = t_masraf - t_iade
-
-                rem_p, rem_i, tot_pay, *_ = hesapla_kademeli_dosya_hesabi(
-                    d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], t_df,
-                    faiz_turu=d_row.get('faiz_turu', 'Özel Oran'),
-                    masraflar_df=m_df,
-                    alacak_kalemleri_df=m_ak_df
-                )
-                
-                cikis_bedeli = float(d_row['takip_cikisi'])
-                m_th_oran = float(d_row.get('tahsil_harci_orani', 9.10) if pd.notnull(d_row.get('tahsil_harci_orani')) else 9.10)
-                m_ch_oran = float(d_row.get('cezaevi_harci_orani', 2.00) if pd.notnull(d_row.get('cezaevi_harci_orani')) else 2.00)
-                t_harc = round(cikis_bedeli * (m_th_oran / 100.0), 2)
-                c_harc = round(cikis_bedeli * (m_ch_oran / 100.0), 2)
-                top_borc = rem_p + rem_i + float(d_row['vekalet_ucreti']) + n_masraf + t_harc + c_harc
-
-                toplam_borc_genel += top_borc
-                toplam_tahsilat_genel += tot_pay
-
-                not_metinleri = []
-                for _, nr in n_df.iterrows():
-                    not_metinleri.append(f"[{nr['tarih']}] {nr['not_icerik']}")
-                birlesik_notlar = "\n".join(not_metinleri) if not_metinleri else "Not girilmemiş."
-
-                vals = [
-                    f"{d_row['il']} {d_row['icra_dairesi']} {d_row['dosya_no']}",
-                    d_row['borclu'],
-                    d_row.get('takip_turu', 'Örnek No: 7'),
-                    top_borc,
-                    tot_pay,
-                    f"{d_row['durum']} ({'İtirazlı' if d_row['itiraz_edildi']==1 else 'Normal'})",
-                    birlesik_notlar
-                ]
-
-                for col_idx, val in enumerate(vals, start=1):
-                    cell = ws_c.cell(row=row_p, column=col_idx, value=val)
-                    cell.font = font_reg
-                    cell.border = thin_border
-                    if isinstance(val, (float, int)) and col_idx in [4, 5]:
-                        cell.number_format = '#,##0.00 "TL"'
-                        cell.alignment = Alignment(horizontal="right", vertical="top")
-                    else:
-                        cell.alignment = Alignment(horizontal="center" if col_idx in [1, 3, 6] else "left", vertical="top", wrap_text=(col_idx == 7))
-                    if row_p % 2 == 1:
-                        cell.fill = fill_zebra
-                ws_c.row_dimensions[row_p].height = 45
-                row_p += 1
-
-            ws_c.cell(row=row_p, column=1, value="TOPLAM PORTFÖY ÖZETİ").font = font_total
-            ws_c.merge_cells(start_row=row_p, start_column=1, end_row=row_p, end_column=3)
-            
-            totals_map = {4: toplam_borc_genel, 5: toplam_tahsilat_genel}
-            for col_idx in range(1, 8):
-                c_tot = ws_c.cell(row=row_p, column=col_idx)
-                c_tot.fill = fill_total
-                c_tot.font = font_total
-                c_tot.border = thin_border
-                if col_idx in totals_map:
-                    c_tot.value = totals_map[col_idx]
-                    c_tot.number_format = '#,##0.00 "TL"'
-                    c_tot.alignment = Alignment(horizontal="right", vertical="center")
-            ws_c.row_dimensions[row_p].height = 26
-
-            ws_c.column_dimensions["A"].width = 28
-            ws_c.column_dimensions["B"].width = 24
-            ws_c.column_dimensions["C"].width = 28
-            ws_c.column_dimensions["D"].width = 24
-            ws_c.column_dimensions["E"].width = 22
-            ws_c.column_dimensions["F"].width = 18
-            ws_c.column_dimensions["G"].width = 55
-
-            buf_c = io.BytesIO()
-            wb_c.save(buf_c)
-            buf_c.seek(0)
-
-            st.download_button(
-                label="📥 Tek Sayfa Konsolide Özet Raporunu İndir (.xlsx)",
-                data=buf_c,
-                file_name=f"{secilen_muvekkil}_Konsolide_Ozet_Rapor.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary"
-            )
+        st.write("")
+        st.download_button(
+            label="📥 Düzenlenmiş Müvekkil Raporunu İndir (.xlsx)",
+            data=buf_c,
+            file_name=f"{secilen_muvekkil}_Muvakkil_Durum_Raporu.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True
+        )
 
 # -------------------------------------------------------------
 # 10. MODÜL 3: YENİ DOSYA AÇILIŞI
