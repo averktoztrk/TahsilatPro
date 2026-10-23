@@ -605,22 +605,36 @@ def hesapla_kademeli_dosya_hesabi(ana_para, faiz_orani, takip_tarihi_str, t_once
     events = []
     if tahsilatlar_df is not None and not tahsilatlar_df.empty:
         for _, row in tahsilatlar_df.iterrows():
-            p_d = datetime.strptime(str(row['tarih']), "%Y-%m-%d").date()
+            t_val = row.get('tarih') if hasattr(row, 'get') else (row['tarih'] if 'tarih' in row else None)
+            if t_val and pd.notnull(t_val):
+                try:
+                    p_d = datetime.strptime(str(t_val)[:10], "%Y-%m-%d").date()
+                except Exception:
+                    p_d = cur_date
+            else:
+                p_d = cur_date
             if p_d <= hesap_tarihi:
                 events.append({
                     "type": "payment",
                     "date": p_d,
-                    "amount": float(row.get('tutar', 0.0)),
-                    "desc": row.get('aciklama', ''),
-                    "id": row.get('id', 0)
+                    "amount": float(row.get('tutar', 0.0) if hasattr(row, 'get') else row['tutar']),
+                    "desc": str(row.get('aciklama', '') if hasattr(row, 'get') else (row['aciklama'] if 'aciklama' in row else '')),
+                    "id": row.get('id', 0) if hasattr(row, 'get') else 0
                 })
 
     # Masraflar takibi (TBK 100 gereği vadesi gelmiş masraflar tahsilattan düşülür)
     masraf_records = []
     if masraflar_df is not None and not masraflar_df.empty:
         for _, m_row in masraflar_df.iterrows():
-            m_d = datetime.strptime(str(m_row['tarih']), "%Y-%m-%d").date()
-            net_m = float(m_row.get('masraf_tutari', 0.0)) - float(m_row.get('iade_tutari', 0.0))
+            m_t_val = m_row.get('tarih') if hasattr(m_row, 'get') else (m_row['tarih'] if 'tarih' in m_row else None)
+            if m_t_val and pd.notnull(m_t_val):
+                try:
+                    m_d = datetime.strptime(str(m_t_val)[:10], "%Y-%m-%d").date()
+                except Exception:
+                    m_d = cur_date
+            else:
+                m_d = cur_date
+            net_m = float(m_row.get('masraf_tutari', 0.0) if hasattr(m_row, 'get') else m_row['masraf_tutari']) - float(m_row.get('iade_tutari', 0.0) if hasattr(m_row, 'get') else (m_row['iade_tutari'] if 'iade_tutari' in m_row else 0.0))
             if m_d <= hesap_tarihi:
                 masraf_records.append({"date": m_d, "amount": net_m})
 
@@ -2263,11 +2277,11 @@ elif menu == "Müvekkil Portföy & Raporlama":
 
         st.markdown(f"**{secilen_muvekkil}** cari kartına bağlı toplam **{len(m_dosyalar)}** adet icra dosyası tespit edildi.")
 
-        m_ids = tuple(m_dosyalar['id'].tolist()) if len(m_dosyalar) > 1 else f"({m_dosyalar['id'].iloc[0]})"
-        m_all_t = pd.read_sql_query(f"SELECT id, dosya_id, tarih, tutar, aciklama FROM tahsilatlar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
-        m_all_m = pd.read_sql_query(f"SELECT id, dosya_id, masraf_tutari, iade_tutari FROM masraflar WHERE dosya_id IN {m_ids}", conn)
-        m_all_n = pd.read_sql_query(f"SELECT id, dosya_id, tarih, not_icerik FROM dosya_notlari WHERE dosya_id IN {m_ids} ORDER BY tarih DESC", conn)
-        m_all_ak = pd.read_sql_query(f"SELECT id, dosya_id, kalem_adi, tutar, t_oncesi_faiz, faiz_turu, faiz_orani FROM alacak_kalemleri WHERE dosya_id IN {m_ids}", conn)
+        m_ids = f"({','.join(map(str, m_dosyalar['id'].tolist()))})"
+        m_all_t = pd.read_sql_query(f"SELECT * FROM tahsilatlar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
+        m_all_m = pd.read_sql_query(f"SELECT * FROM masraflar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
+        m_all_n = pd.read_sql_query(f"SELECT * FROM dosya_notlari WHERE dosya_id IN {m_ids} ORDER BY tarih DESC", conn)
+        m_all_ak = pd.read_sql_query(f"SELECT * FROM alacak_kalemleri WHERE dosya_id IN {m_ids}", conn)
 
         m_t_grp = dict(tuple(m_all_t.groupby("dosya_id"))) if not m_all_t.empty else {}
         m_m_grp = dict(tuple(m_all_m.groupby("dosya_id"))) if not m_all_m.empty else {}
@@ -2275,9 +2289,9 @@ elif menu == "Müvekkil Portföy & Raporlama":
         m_ak_grp = dict(tuple(m_all_ak.groupby("dosya_id"))) if not m_all_ak.empty else {}
 
         m_emp_t = pd.DataFrame(columns=["id", "dosya_id", "tarih", "tutar", "aciklama"])
-        m_emp_m = pd.DataFrame(columns=["id", "dosya_id", "masraf_tutari", "iade_tutari"])
+        m_emp_m = pd.DataFrame(columns=["id", "dosya_id", "tarih", "aciklama", "masraf_tutari", "iade_tutari"])
         m_emp_n = pd.DataFrame(columns=["id", "dosya_id", "tarih", "not_icerik"])
-        m_emp_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani"])
+        m_emp_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani", "kalem_turu", "sorumlu_borclular"])
 
         rapor_satirlari = []
         for _, d_row in m_dosyalar.iterrows():
@@ -2294,6 +2308,9 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 alacak_kalemleri_df=m_ak_df
             )
 
+            is_infaz = bool(re.search(r"Kapatıldı|İnfaz|Kapalı", str(d_row.get('durum', '')), re.I))
+            kalan_alacak_goster = 0.0 if is_infaz else float(rem_p)
+
             not_metinleri = [nr['not_icerik'] for _, nr in n_df.iterrows()]
             son_not = not_metinleri[0] if not_metinleri else "İşlem aşamasında."
 
@@ -2304,7 +2321,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 "Takip Türü": str(d_row.get('takip_turu', 'Örnek No: 7')),
                 "Başlangıç Asıl Alacak": float(d_row['ana_para']),
                 "Tahsil Edilen": float(tot_pay),
-                "Kalan Asıl Alacak": float(rem_p),
+                "Kalan Asıl Alacak": kalan_alacak_goster,
                 "Dosya Statüsü": f"{d_row['durum']} ({'İtirazlı' if d_row['itiraz_edildi']==1 else 'Normal'})",
                 "Müvekkile Rapor Notu": son_not
             })
