@@ -1314,6 +1314,17 @@ def get_cached_dosyalar_kpi():
     except Exception:
         return pd.DataFrame(), pd.DataFrame()
 
+def invalidate_caches():
+    st.session_state["_calc_cache"] = {}
+    try:
+        get_cached_dosyalar_kpi.clear()
+    except Exception:
+        pass
+    try:
+        get_cached_taraflar_list.clear()
+    except Exception:
+        pass
+
 # -------------------------------------------------------------
 # 8. MODÜL 1: ÇALIŞMA MASASI & ARAMA MOTORU
 # -------------------------------------------------------------
@@ -1368,24 +1379,24 @@ if menu == "Dosya Arama & Çalışma Masası":
     # Hızlı Durum Filtre Çipleri (5 Seçenek: Tümü, İtirazlılar, Kesinleşenler, Bekleyenler, Kapalı/İnfaz)
     f_col1, f_col2, f_col3, f_col4, f_col5 = st.columns(5)
     aktif_filtre = st.session_state.get("dosya_tab_filtre", "Tümü")
-    if f_col1.button(f"📁 Tümü ({toplam_dosya_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "Tümü" else "secondary"):
+    if f_col1.button(f"📁 Tümü ({toplam_dosya_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "Tümü" else "secondary", key="btn_chip_all"):
+        aktif_filtre = "Tümü"
         st.session_state["dosya_tab_filtre"] = "Tümü"
-        st.rerun()
-    if f_col2.button(f"🚨 İtirazlılar ({itirazli_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "İtirazlı" else "secondary"):
+    elif f_col2.button(f"🚨 İtirazlılar ({itirazli_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "İtirazlı" else "secondary", key="btn_chip_itiraz"):
+        aktif_filtre = "İtirazlı"
         st.session_state["dosya_tab_filtre"] = "İtirazlı"
-        st.rerun()
     kesin_sayisi = len(tum_dosyalar[tum_dosyalar['kesinlesme_durumu'] == 1]) if not tum_dosyalar.empty else 0
-    if f_col3.button(f"✅ Kesinleşenler ({kesin_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "Kesinleşen" else "secondary"):
+    if f_col3.button(f"✅ Kesinleşenler ({kesin_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "Kesinleşen" else "secondary", key="btn_chip_kesin"):
+        aktif_filtre = "Kesinleşen"
         st.session_state["dosya_tab_filtre"] = "Kesinleşen"
-        st.rerun()
     bekleyen_sayisi = len(tum_dosyalar[(tum_dosyalar['kesinlesme_durumu'] == 0) & (tum_dosyalar['itiraz_edildi'] == 0)]) if not tum_dosyalar.empty else 0
-    if f_col4.button(f"⏳ Bekleyenler ({bekleyen_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "Bekleyen" else "secondary"):
+    if f_col4.button(f"⏳ Bekleyenler ({bekleyen_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "Bekleyen" else "secondary", key="btn_chip_bekleyen"):
+        aktif_filtre = "Bekleyen"
         st.session_state["dosya_tab_filtre"] = "Bekleyen"
-        st.rerun()
     kapali_sayisi = len(tum_dosyalar[tum_dosyalar['durum'].astype(str).str.contains("Kapatıldı|İnfaz|Kapalı", case=False, na=False)]) if not tum_dosyalar.empty else 0
-    if f_col5.button(f"🔒 Kapalı / İnfaz ({kapali_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "Kapalı" else "secondary"):
+    if f_col5.button(f"🔒 Kapalı / İnfaz ({kapali_sayisi})", use_container_width=True, type="primary" if aktif_filtre == "Kapalı" else "secondary", key="btn_chip_kapali"):
+        aktif_filtre = "Kapalı"
         st.session_state["dosya_tab_filtre"] = "Kapalı"
-        st.rerun()
 
     with st.expander("⚙️ Detaylı Filtreler (İl, İlçe, Daire, Taraf, Statü)", expanded=False):
         col1, col2, col3, col4 = st.columns(4)
@@ -1471,45 +1482,70 @@ if menu == "Dosya Arama & Çalışma Masası":
         empty_masraf = pd.DataFrame(columns=["id", "dosya_id", "tarih", "aciklama", "masraf_tutari", "iade_tutari"])
         empty_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani", "kalem_turu", "sorumlu_borclular"])
 
+        calc_cache = st.session_state.setdefault("_calc_cache", {})
+        today_val = date.today()
+
         for _, r in df.iterrows():
             d_id = r['id']
             tahsilat_df = tahsilat_groups.get(d_id, empty_tahsilat)
             masraf_df = masraf_groups.get(d_id, empty_masraf)
             ak_df = ak_groups.get(d_id, empty_ak)
             
-            toplam_m = masraf_df['masraf_tutari'].sum() if not masraf_df.empty else 0.0
-            toplam_i = masraf_df['iade_tutari'].sum() if not masraf_df.empty else 0.0
-            net_m = toplam_m - toplam_i
-
             is_infaz = bool(re.search(r"Kapatıldı|İnfaz|Kapalı", str(r.get('durum', '')), re.I))
 
-            rem_p, rem_i, tot_pay, m_list, *_ = hesapla_kademeli_dosya_hesabi(
-                r['ana_para'], r['faiz_orani'], r['takip_tarihi'], r['t_oncesi_faiz'], tahsilat_df,
-                faiz_turu=r.get('faiz_turu', 'Özel Oran'),
-                masraflar_df=masraf_df,
-                alacak_kalemleri_df=ak_df
+            if is_infaz:
+                tot_pay = float(tahsilat_df['tutar'].sum()) if not tahsilat_df.empty else float(r['ana_para'])
+                kalan_anaparalar.append("0,00 TL")
+                kalan_faizler.append("0,00 TL")
+                toplam_tahsilatlar.append(format_tr_money(tot_pay))
+                guncel_bakiyeler.append("0,00 TL (İnfaz)")
+                continue
+
+            toplam_m = float(masraf_df['masraf_tutari'].sum()) if not masraf_df.empty else 0.0
+            toplam_i = float(masraf_df['iade_tutari'].sum()) if not masraf_df.empty else 0.0
+            net_m = toplam_m - toplam_i
+
+            t_tutar_sum = float(tahsilat_df['tutar'].sum()) if not tahsilat_df.empty else 0.0
+            cache_key = (
+                int(d_id),
+                str(r.get('takip_tarihi', '')),
+                float(r.get('ana_para', 0.0)),
+                float(r.get('faiz_orani', 0.0)),
+                str(r.get('faiz_turu', '')),
+                float(r.get('t_oncesi_faiz', 0.0)),
+                len(tahsilat_df),
+                t_tutar_sum,
+                len(masraf_df),
+                net_m,
+                len(ak_df),
+                today_val
             )
+
+            if cache_key in calc_cache:
+                rem_p, rem_i, tot_pay, m_list = calc_cache[cache_key]
+            else:
+                rem_p, rem_i, tot_pay, m_list, *_ = hesapla_kademeli_dosya_hesabi(
+                    r['ana_para'], r['faiz_orani'], r['takip_tarihi'], r['t_oncesi_faiz'], tahsilat_df,
+                    faiz_turu=r.get('faiz_turu', 'Özel Oran'),
+                    masraflar_df=masraf_df,
+                    alacak_kalemleri_df=ak_df
+                )
+                calc_cache[cache_key] = (rem_p, rem_i, tot_pay, m_list)
             
             cikis_tutari = float(r['takip_cikisi'])
             t_harc_oran = float(r.get('tahsil_harci_orani', 9.10) if pd.notnull(r.get('tahsil_harci_orani')) else 9.10)
             c_harc_oran = float(r.get('cezaevi_harci_orani', 2.00) if pd.notnull(r.get('cezaevi_harci_orani')) else 2.00)
             tahsil_harci = round(cikis_tutari * (t_harc_oran / 100.0), 2)
             
-            if f"ch_haric_{r['id']}" in st.session_state:
-                d_ch_haric = st.session_state[f"ch_haric_{r['id']}"]
-            else:
-                d_ch_haric = global_ch_haric
+            d_ch_haric = st.session_state.get(f"ch_haric_{r['id']}", global_ch_haric)
 
             if d_ch_haric or c_harc_oran == 0.0:
                 cezaevi_harci = 0.0
             else:
                 cezaevi_harci = round(cikis_tutari * (c_harc_oran / 100.0), 2)
 
-            if is_infaz:
-                kalan_anaparalar.append("0,00 TL")
-                kalan_faizler.append("0,00 TL")
-                toplam_tahsilatlar.append(format_tr_money(tot_pay))
-                guncel_bakiyeler.append("0,00 TL (İnfaz)")
+            if False:
+                pass
             else:
                 consumed_in_items = sum(
                     float(parse_tr_money(m_item.get("Masrafa Mahsup", "0"))) +
@@ -1585,7 +1621,6 @@ if menu == "Dosya Arama & Çalışma Masası":
                     st.session_state["aktif_dosya_id"] = chosen_from_p
                     id_list = list(df['id'])
                     st.session_state["last_clicked_df_row"] = id_list.index(chosen_from_p) if chosen_from_p in id_list else None
-                    st.rerun()
         with col_pk2:
             st.write("")
             st.caption(f"⚡ Listelenen: **{len(df)} dosya**")
@@ -1608,7 +1643,6 @@ if menu == "Dosya Arama & Çalışma Masası":
                 clicked_id = int(df.iloc[clicked_row]['id'])
                 if clicked_id != st.session_state.get("aktif_dosya_id"):
                     st.session_state["aktif_dosya_id"] = clicked_id
-                    st.rerun()
 
         if "aktif_dosya_id" in st.session_state and st.session_state["aktif_dosya_id"]:
             secili_id = st.session_state["aktif_dosya_id"]
@@ -1808,6 +1842,7 @@ if menu == "Dosya Arama & Çalışma Masası":
                                                 WHERE id = ?
                                             """, (tot_p, tot_i, cikis_h, vek_h, ed_faiz_tipi, final_ed_oran, secili_id))
                                         conn.commit()
+                                        invalidate_caches()
                                         st.success("Kalem başarıyla güncellendi!")
                                         st.rerun()
 
@@ -1829,6 +1864,7 @@ if menu == "Dosya Arama & Çalışma Masası":
                                         vek_h = hesapla_icra_vekalet_ucreti(cikis_h)
                                         cursor.execute("UPDATE dosyalar SET ana_para = ?, t_oncesi_faiz = ?, takip_cikisi = ?, vekalet_ucreti = ? WHERE id = ?", (tot_p, tot_i, cikis_h, vek_h, secili_id))
                                     conn.commit()
+                                    invalidate_caches()
                                     st.success("Alacak kalemi silindi!")
                                     st.rerun()
                         else:
@@ -1880,6 +1916,7 @@ if menu == "Dosya Arama & Çalışma Masası":
                                         WHERE id = ?
                                     """, (tot_p, tot_i, cikis_h, vek_h, ak_faiz_tipi, final_ak_oran, secili_id))
                                     conn.commit()
+                                    invalidate_caches()
                                     st.success(f"'{ak_ad}' kalemi eklendi ve dosya toplamı güncellendi!")
                                     st.rerun()
                                 else:
@@ -1895,6 +1932,7 @@ if menu == "Dosya Arama & Çalışma Masası":
                         if st.button("Statü Güncelle", type="primary", key=f"btn_upd_statu_{secili_id}"):
                             cursor.execute("UPDATE dosyalar SET itiraz_edildi = ?, kesinlesme_durumu = ?, durum = ? WHERE id = ?", (1 if c_itiraz else 0, 1 if c_kesin else 0, durum_aciklama, secili_id))
                             conn.commit()
+                            invalidate_caches()
                             st.success("Durum güncellendi!")
                             st.rerun()
 
@@ -1915,6 +1953,7 @@ if menu == "Dosya Arama & Çalışma Masası":
                                 cursor.execute("INSERT INTO tahsilatlar (dosya_id, tarih, tutar, aciklama) VALUES (?, ?, ?, ?)", (secili_id, str(t_tarih), t_tutar, t_aciklama))
                                 cursor.execute("INSERT INTO dosya_notlari (dosya_id, tarih, not_icerik) VALUES (?, ?, ?)", (secili_id, str(t_tarih), f"{format_tr_money(t_tutar)} tahsilat yapıldı. ({t_aciklama})"))
                                 conn.commit()
+                                invalidate_caches()
                                 st.success("Tahsilat TBK m. 100 gereğince mahsup edildi!")
                                 st.rerun()
 
@@ -1947,11 +1986,13 @@ if menu == "Dosya Arama & Çalışma Masası":
                                     if st.button("Tahsilat Düzenle", key=f"btn_edit_tahsilat_{sec_t_id}"):
                                         cursor.execute("UPDATE tahsilatlar SET tarih = ?, tutar = ?, aciklama = ? WHERE id = ?", (str(edt_t_date), edt_t_amt, edt_t_dsc, sec_t_id))
                                         conn.commit()
+                                        invalidate_caches()
                                         st.rerun()
                                 with btn_th2:
                                     if st.button("🗑️ Tahsilatı Sil", key=f"btn_del_tahsilat_{sec_t_id}"):
                                         cursor.execute("DELETE FROM tahsilatlar WHERE id = ?", (sec_t_id,))
                                         conn.commit()
+                                        invalidate_caches()
                                         st.rerun()
 
                     with t_notlar:
@@ -2182,6 +2223,7 @@ if menu == "Dosya Arama & Çalışma Masası":
                             """, (e_il, e_ilce, e_daire, e_tam_no, e_alacakli, e_b_str, e_tur, str(e_tarih), tot_p, tot_i, e_cikis, e_vekalet, e_faiz_tipi, final_e_oran, e_th_secim, e_th_oran, e_ch_oran, secili_id))
 
                             conn.commit()
+                            invalidate_caches()
                             st.success("Dosya bilgileri, faiz oranları ve alacak toplamları başarıyla güncellendi!")
                             st.rerun()
 
@@ -2193,6 +2235,7 @@ if menu == "Dosya Arama & Çalışma Masası":
                             cursor.execute("DELETE FROM dosya_notlari WHERE dosya_id = ?", (secili_id,))
                             cursor.execute("DELETE FROM alacak_kalemleri WHERE dosya_id = ?", (secili_id,))
                             conn.commit()
+                            invalidate_caches()
                             st.session_state["aktif_dosya_id"] = None
                             st.session_state["last_clicked_df_row"] = None
                             st.rerun()
@@ -2219,6 +2262,7 @@ if menu == "Dosya Arama & Çalışma Masası":
                         if yeni_oran_hizli != -1.0:
                             cursor.execute("UPDATE dosyalar SET tahsil_harci_safhasi = ?, tahsil_harci_orani = ? WHERE id = ?", (secilen_hizli_safha, yeni_oran_hizli, secili_id))
                             conn.commit()
+                            invalidate_caches()
                             st.rerun()
 
                     # Cezaevi Harcı Hızlı Aç/Kapat
@@ -2316,12 +2360,33 @@ elif menu == "Müvekkil Portföy & Raporlama":
             n_df = m_n_grp.get(d_id, m_emp_n)
             m_ak_df = m_ak_grp.get(d_id, m_emp_ak)
 
-            rem_p, rem_i, tot_pay, *_ = hesapla_kademeli_dosya_hesabi(
-                d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], t_df,
-                faiz_turu=d_row.get('faiz_turu', 'Özel Oran'),
-                masraflar_df=m_df,
-                alacak_kalemleri_df=m_ak_df
+            calc_cache = st.session_state.setdefault("_calc_cache", {})
+            t_tutar_sum = float(t_df['tutar'].sum()) if not t_df.empty else 0.0
+            m_net_sum = float(m_df['masraf_tutari'].sum() - m_df['iade_tutari'].sum()) if not m_df.empty else 0.0
+            cache_key = (
+                int(d_id),
+                str(d_row.get('takip_tarihi', '')),
+                float(d_row.get('ana_para', 0.0)),
+                float(d_row.get('faiz_orani', 0.0)),
+                str(d_row.get('faiz_turu', '')),
+                float(d_row.get('t_oncesi_faiz', 0.0)),
+                len(t_df),
+                t_tutar_sum,
+                len(m_df),
+                m_net_sum,
+                len(m_ak_df),
+                date.today()
             )
+            if cache_key in calc_cache:
+                rem_p, rem_i, tot_pay, *_ = calc_cache[cache_key]
+            else:
+                rem_p, rem_i, tot_pay, m_list, *_ = hesapla_kademeli_dosya_hesabi(
+                    d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], t_df,
+                    faiz_turu=d_row.get('faiz_turu', 'Özel Oran'),
+                    masraflar_df=m_df,
+                    alacak_kalemleri_df=m_ak_df
+                )
+                calc_cache[cache_key] = (rem_p, rem_i, tot_pay, m_list)
 
             ana_para = float(d_row['ana_para'])
 
@@ -2571,7 +2636,6 @@ elif menu == "Yeni Dosya Açılışı":
                                 conn.commit()
 
                     st.success(f"✅ UDF Başarıyla Ayrıştırıldı: **{p_data.get('dosya_no', 'Dosya')}** | {len(p_data.get('borclular', []))} Borçlu ve Müvekkil sisteme işlendi.")
-                    st.rerun()
 
     udf_aktif = st.session_state.get("udf_data", None)
 
@@ -2876,6 +2940,7 @@ elif menu == "Yeni Dosya Açılışı":
                 """, (primary_faiz_turu, primary_faiz_orani, new_dosya_id))
 
                 conn.commit()
+                invalidate_caches()
                 st.session_state["udf_data"] = None
                 st.session_state["son_yuklenen_udf_ad"] = None
                 st.session_state["form_kalemler_list"] = None
@@ -2913,6 +2978,10 @@ elif menu == "Taraf (Cari) Yönetimi":
                         VALUES (?, ?, ?, ?, ?, ?)
                         """, (taraf_tipi, ad_unvan.strip(), tc_vkn.strip(), vergi_dairesi.strip(), telefon.strip(), adres.strip()))
                         conn.commit()
+                        try:
+                            get_cached_taraflar_list.clear()
+                        except Exception:
+                            pass
                         st.success(f"'{ad_unvan}' cari kartı oluşturuldu!")
                         st.rerun()
                     except (sqlite3.IntegrityError, IntegrityError):
