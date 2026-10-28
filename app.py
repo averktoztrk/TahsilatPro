@@ -2393,14 +2393,32 @@ elif menu == "Müvekkil Portföy & Raporlama":
             not_metinleri = [nr['not_icerik'] for _, nr in n_df.iterrows()]
             son_not = not_metinleri[0] if not_metinleri else "İşlem aşamasında."
 
+            is_infaz_d = bool(re.search(r"Kapatıldı|İnfaz|Kapalı", str(d_row.get('durum', '')), re.I))
+            is_itiraz_d = bool(d_row.get('itiraz_edildi') == 1)
+            is_kesin_d = bool(d_row.get('kesinlesme_durumu') == 1)
+
+            if is_infaz_d:
+                statu_metni = "🔒 İnfazen Kapatıldı"
+                statu_kodu = "INFAZ"
+            elif is_itiraz_d:
+                statu_metni = "🚨 İtiraz Edildi (Takip Durdu)"
+                statu_kodu = "ITIRAZ"
+            elif is_kesin_d:
+                statu_metni = "✅ Kesinleşti (Haciz Safhasında)"
+                statu_kodu = "KESIN"
+            else:
+                statu_metni = "📂 Açık / Derdest (Tebliğ Aşamasında)"
+                statu_kodu = "ACIK"
+
             rapor_satirlari.append({
                 "dosya_id": d_id,
+                "statu_kodu": statu_kodu,
                 "Dosya No / Daire": f"{d_row['il']} {d_row['icra_dairesi']} {d_row['dosya_no']}",
                 "Borçlu(lar)": str(d_row['borclu']),
                 "Takip Türü": str(d_row.get('takip_turu', 'Örnek No: 7')),
                 "Başlangıç Asıl Alacak": float(d_row['ana_para']),
                 "Tahsil Edilen": float(tot_pay),
-                "Dosya Statüsü": f"{d_row['durum']} ({'İtirazlı' if d_row['itiraz_edildi']==1 else 'Normal'})",
+                "Dosya Statüsü": statu_metni,
                 "Müvekkile Rapor Notu": son_not
             })
 
@@ -2418,8 +2436,10 @@ elif menu == "Müvekkil Portföy & Raporlama":
             num_rows="dynamic",
             column_config={
                 "dosya_id": None,
+                "statu_kodu": None,
                 "Başlangıç Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
                 "Tahsil Edilen": st.column_config.NumberColumn(format="%.2f TL"),
+                "Dosya Statüsü": st.column_config.TextColumn(width="medium"),
                 "Müvekkile Rapor Notu": st.column_config.TextColumn(width="large")
             }
         )
@@ -2451,7 +2471,33 @@ elif menu == "Müvekkil Portföy & Raporlama":
         rk3.metric("Toplam Tahsil Edilen", format_tr_money(top_tahsilat))
         rk4.metric("🎯 Portföy Tahsilat Başarı Oranı", f"%{tahsil_orani_yuzde:.2f}")
 
-        # Excel Export of the Edited Data
+        cnt_infaz = sum(1 for _, r in edited_report.iterrows() if "İnfaz" in str(r.get("Dosya Statüsü", "")) or "Kapalı" in str(r.get("Dosya Statüsü", "")))
+        cnt_itiraz = sum(1 for _, r in edited_report.iterrows() if "İtiraz" in str(r.get("Dosya Statüsü", "")))
+        cnt_kesin = sum(1 for _, r in edited_report.iterrows() if "Kesinleş" in str(r.get("Dosya Statüsü", "")))
+        cnt_acik = max(0, len(edited_report) - cnt_infaz - cnt_itiraz - cnt_kesin)
+
+        st.markdown(f"""
+        <div style="display: flex; gap: 8px; margin-top: 10px; margin-bottom: 12px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 140px; background: rgba(16, 185, 129, 0.12); border: 1.5px solid #10B981; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                <span style="font-size: 11px; font-weight: 700; color: #10B981; text-transform: uppercase;">🔒 İnfazen Kapatıldı</span>
+                <div style="font-size: 17px; font-weight: 800; color: #10B981;">{cnt_infaz} Dosya</div>
+            </div>
+            <div style="flex: 1; min-width: 140px; background: rgba(239, 68, 68, 0.12); border: 1.5px solid #EF4444; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                <span style="font-size: 11px; font-weight: 700; color: #EF4444; text-transform: uppercase;">🚨 İtiraz Edildi</span>
+                <div style="font-size: 17px; font-weight: 800; color: #EF4444;">{cnt_itiraz} Dosya</div>
+            </div>
+            <div style="flex: 1; min-width: 140px; background: rgba(14, 165, 233, 0.12); border: 1.5px solid #0EA5E9; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                <span style="font-size: 11px; font-weight: 700; color: #0EA5E9; text-transform: uppercase;">✅ Kesinleşti</span>
+                <div style="font-size: 17px; font-weight: 800; color: #0EA5E9;">{cnt_kesin} Dosya</div>
+            </div>
+            <div style="flex: 1; min-width: 140px; background: rgba(148, 163, 184, 0.12); border: 1.5px solid #94A3B8; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                <span style="font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase;">📂 Açık / Derdest</span>
+                <div style="font-size: 17px; font-weight: 800; color: #64748B;">{cnt_acik} Dosya</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Excel Export of the Edited Data with Corporate Status Color Coding
         wb_c = openpyxl.Workbook()
         ws_c = wb_c.active
         ws_c.title = "Müvekkil Durum Özeti"
@@ -2459,11 +2505,30 @@ elif menu == "Müvekkil Portföy & Raporlama":
 
         fill_header = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
         fill_sub = PatternFill(start_color="1F2421", end_color="1F2421", fill_type="solid")
-        fill_zebra = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+        fill_legend = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
         fill_total = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
+
+        # Color Fills for Rows and Status Badges
+        fill_row_infaz = PatternFill(start_color="F0FDF4", end_color="F0FDF4", fill_type="solid")
+        fill_cell_infaz = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+        font_status_infaz = Font(name="Arial", size=10, bold=True, color="166534")
+
+        fill_row_itiraz = PatternFill(start_color="FEF2F2", end_color="FEF2F2", fill_type="solid")
+        fill_cell_itiraz = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+        font_status_itiraz = Font(name="Arial", size=10, bold=True, color="991B1B")
+
+        fill_row_kesin = PatternFill(start_color="F0F9FF", end_color="F0F9FF", fill_type="solid")
+        fill_cell_kesin = PatternFill(start_color="E0F2FE", end_color="E0F2FE", fill_type="solid")
+        font_status_kesin = Font(name="Arial", size=10, bold=True, color="075985")
+
+        fill_row_acik = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+        fill_row_acik_alt = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+        fill_cell_acik = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+        font_status_acik = Font(name="Arial", size=10, bold=True, color="334155")
 
         font_title = Font(name="Arial", size=13, bold=True, color="FFFFFF")
         font_sub = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        font_legend = Font(name="Arial", size=9, bold=True, color="475569")
         font_reg = Font(name="Arial", size=10, color="000000")
         font_total = Font(name="Arial", size=11, bold=True, color="FFFFFF")
 
@@ -2480,10 +2545,19 @@ elif menu == "Müvekkil Portföy & Raporlama":
         ws_c.row_dimensions[1].height = 36
 
         ws_c.merge_cells("A2:G2")
-        ws_c["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Dosya: {len(edited_report)}"
+        ws_c["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Dosya: {len(edited_report)} | Portföy Asıl Alacak: {format_tr_money(top_baslangic)} | Toplam Tahsilat: {format_tr_money(top_tahsilat)} (%{tahsil_orani_yuzde:.1f})"
         ws_c["A2"].font = Font(name="Arial", size=9, italic=True, color="334155")
         ws_c["A2"].alignment = Alignment(horizontal="center", vertical="center")
         ws_c.row_dimensions[2].height = 20
+
+        # Sleek Corporate Color Legend
+        ws_c.merge_cells("A3:G3")
+        ws_c["A3"] = f"RENK LEJANDI:  🔒 İnfazen Kapatıldı ({cnt_infaz}) [Yeşil]   |   🚨 İtiraz Edildi ({cnt_itiraz}) [Kırmızı]   |   ✅ Kesinleşti ({cnt_kesin}) [Mavi]   |   📂 Açık/Derdest ({cnt_acik}) [Beyaz]"
+        ws_c["A3"].font = font_legend
+        ws_c["A3"].fill = fill_legend
+        ws_c["A3"].alignment = Alignment(horizontal="center", vertical="center")
+        ws_c["A3"].border = thin_border
+        ws_c.row_dimensions[3].height = 22
 
         headers_c = [
             "Dosya No / İcra Dairesi", 
@@ -2505,6 +2579,35 @@ elif menu == "Müvekkil Portföy & Raporlama":
 
         row_p = 5
         for _, row_data in edited_report.iterrows():
+            statu_val = str(row_data.get("Dosya Statüsü", ""))
+            st_code = str(row_data.get("statu_kodu", ""))
+            if not st_code:
+                if "İnfaz" in statu_val or "Kapalı" in statu_val:
+                    st_code = "INFAZ"
+                elif "İtiraz" in statu_val:
+                    st_code = "ITIRAZ"
+                elif "Kesinleş" in statu_val:
+                    st_code = "KESIN"
+                else:
+                    st_code = "ACIK"
+
+            if st_code == "INFAZ":
+                row_fill = fill_row_infaz
+                status_fill = fill_cell_infaz
+                status_font = font_status_infaz
+            elif st_code == "ITIRAZ":
+                row_fill = fill_row_itiraz
+                status_fill = fill_cell_itiraz
+                status_font = font_status_itiraz
+            elif st_code == "KESIN":
+                row_fill = fill_row_kesin
+                status_fill = fill_cell_kesin
+                status_font = font_status_kesin
+            else:
+                row_fill = fill_row_acik if row_p % 2 == 0 else fill_row_acik_alt
+                status_fill = fill_cell_acik
+                status_font = font_status_acik
+
             vals = [
                 str(row_data["Dosya No / Daire"]),
                 str(row_data["Borçlu(lar)"]),
@@ -2518,13 +2621,16 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 cell = ws_c.cell(row=row_p, column=col_idx, value=val)
                 cell.font = font_reg
                 cell.border = thin_border
-                if isinstance(val, (float, int)) and col_idx in [4, 5]:
+                cell.fill = row_fill
+                if col_idx == 6:
+                    cell.fill = status_fill
+                    cell.font = status_font
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                elif isinstance(val, (float, int)) and col_idx in [4, 5]:
                     cell.number_format = '#,##0.00 "TL"'
                     cell.alignment = Alignment(horizontal="right", vertical="top")
                 else:
-                    cell.alignment = Alignment(horizontal="center" if col_idx in [1, 3, 6] else "left", vertical="top", wrap_text=(col_idx == 7))
-                if row_p % 2 == 1:
-                    cell.fill = fill_zebra
+                    cell.alignment = Alignment(horizontal="center" if col_idx in [1, 3] else "left", vertical="top", wrap_text=(col_idx == 7))
             ws_c.row_dimensions[row_p].height = 36
             row_p += 1
 
