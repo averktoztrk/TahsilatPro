@@ -1665,7 +1665,7 @@ if menu == "Dosya Arama & Çalışma Masası":
                 if ak_df is None:
                     ak_df = pd.read_sql_query("SELECT id, kalem_adi, kalem_turu, tutar, t_oncesi_faiz, faiz_turu, faiz_orani, sorumlu_borclular FROM alacak_kalemleri WHERE dosya_id = ?", conn, params=[secili_id])
                 
-                notlar_df = pd.read_sql_query("SELECT id, tarih, not_icerik FROM dosya_notlari WHERE dosya_id = ? ORDER BY tarih DESC", conn, params=[secili_id])
+                notlar_df = pd.read_sql_query("SELECT id, tarih, not_icerik FROM dosya_notlari WHERE dosya_id = ? ORDER BY tarih DESC, id DESC", conn, params=[secili_id])
                 
                 top_masraf = masraf_df['masraf_tutari'].sum() if not masraf_df.empty else 0.0
                 top_iade = masraf_df['iade_tutari'].sum() if not masraf_df.empty else 0.0
@@ -2339,7 +2339,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
         m_ids = f"({','.join(map(str, m_dosyalar['id'].tolist()))})"
         m_all_t = pd.read_sql_query(f"SELECT * FROM tahsilatlar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
         m_all_m = pd.read_sql_query(f"SELECT * FROM masraflar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
-        m_all_n = pd.read_sql_query(f"SELECT * FROM dosya_notlari WHERE dosya_id IN {m_ids} ORDER BY tarih DESC", conn)
+        m_all_n = pd.read_sql_query(f"SELECT * FROM dosya_notlari WHERE dosya_id IN {m_ids} ORDER BY tarih DESC, id DESC", conn)
         m_all_ak = pd.read_sql_query(f"SELECT * FROM alacak_kalemleri WHERE dosya_id IN {m_ids}", conn)
 
         m_t_grp = dict(tuple(m_all_t.groupby("dosya_id"))) if not m_all_t.empty else {}
