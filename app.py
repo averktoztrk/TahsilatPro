@@ -2309,7 +2309,14 @@ elif menu == "Müvekkil Portföy & Raporlama":
             )
 
             is_infaz = bool(re.search(r"Kapatıldı|İnfaz|Kapalı", str(d_row.get('durum', '')), re.I))
-            kalan_alacak_goster = 0.0 if is_infaz else float(rem_p)
+            ana_para = float(d_row['ana_para'])
+            if is_infaz:
+                tahsil_asıl = ana_para
+                kalan_alacak_goster = 0.0
+            else:
+                # Müvekkil raporunda yalnızca asıl alacak bazlı net mahsup:
+                tahsil_asıl = min(ana_para, float(tot_pay))
+                kalan_alacak_goster = max(0.0, ana_para - tahsil_asıl)
 
             not_metinleri = [nr['not_icerik'] for _, nr in n_df.iterrows()]
             son_not = not_metinleri[0] if not_metinleri else "İşlem aşamasında."
@@ -2320,7 +2327,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 "Borçlu(lar)": str(d_row['borclu']),
                 "Takip Türü": str(d_row.get('takip_turu', 'Örnek No: 7')),
                 "Başlangıç Asıl Alacak": float(d_row['ana_para']),
-                "Tahsil Edilen": float(tot_pay),
+                "Tahsil Edilen": tahsil_asıl,
                 "Kalan Asıl Alacak": kalan_alacak_goster,
                 "Dosya Statüsü": f"{d_row['durum']} ({'İtirazlı' if d_row['itiraz_edildi']==1 else 'Normal'})",
                 "Müvekkile Rapor Notu": son_not
@@ -2366,11 +2373,13 @@ elif menu == "Müvekkil Portföy & Raporlama":
         top_kalan = float(edited_report["Kalan Asıl Alacak"].sum()) if not edited_report.empty else 0.0
 
         st.write("")
-        rk1, rk2, rk3, rk4 = st.columns(4)
+        tahsil_orani_yuzde = (top_tahsilat / top_baslangic * 100.0) if top_baslangic > 0 else 0.0
+        rk1, rk2, rk3, rk4, rk5 = st.columns(5)
         rk1.metric("Toplam Dosya", f"{len(edited_report)} Adet")
         rk2.metric("Portföy Asıl Alacak", format_tr_money(top_baslangic))
         rk3.metric("Tahsil Edilen Tutar", format_tr_money(top_tahsilat))
         rk4.metric("Kalan Müvekkil Alacağı", format_tr_money(top_kalan))
+        rk5.metric("🎯 Tahsilat Başarı Oranı", f"%{tahsil_orani_yuzde:.2f}")
 
         # Excel Export of the Edited Data
         wb_c = openpyxl.Workbook()
