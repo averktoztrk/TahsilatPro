@@ -1583,7 +1583,8 @@ if menu == "Dosya Arama & Çalışma Masası":
                 chosen_from_p = picker_dict[s_pick]
                 if chosen_from_p != cur_active_id:
                     st.session_state["aktif_dosya_id"] = chosen_from_p
-                    st.session_state["last_clicked_df_row"] = list(df['id']).index(chosen_from_p)
+                    id_list = list(df['id'])
+                    st.session_state["last_clicked_df_row"] = id_list.index(chosen_from_p) if chosen_from_p in id_list else None
                     st.rerun()
         with col_pk2:
             st.write("")
@@ -1602,9 +1603,12 @@ if menu == "Dosya Arama & Çalışma Masası":
         last_clicked = st.session_state.get("last_clicked_df_row", None)
         if secilen_satirlar:
             clicked_row = secilen_satirlar[0]
-            if clicked_row != last_clicked:
+            if clicked_row != last_clicked and 0 <= clicked_row < len(df):
                 st.session_state["last_clicked_df_row"] = clicked_row
-                st.session_state["aktif_dosya_id"] = int(df.iloc[clicked_row]['id'])
+                clicked_id = int(df.iloc[clicked_row]['id'])
+                if clicked_id != st.session_state.get("aktif_dosya_id"):
+                    st.session_state["aktif_dosya_id"] = clicked_id
+                    st.rerun()
 
         if "aktif_dosya_id" in st.session_state and st.session_state["aktif_dosya_id"]:
             secili_id = st.session_state["aktif_dosya_id"]
@@ -1750,8 +1754,8 @@ if menu == "Dosya Arama & Çalışma Masası":
 
                             with st.expander("✏️ Seçili Kalemi Düzenle", expanded=False):
                                 edit_dict = {f"ID: {r['id']} | {r['kalem_adi']} ({format_tr_money(r['tutar'])})": r for _, r in ak_df.iterrows()}
-                                sel_k_label = st.selectbox("Düzenlenecek Kalem", list(edit_dict.keys()), key="sel_k_edit_box")
-                                sel_k_row = edit_dict[sel_k_label]
+                                sel_k_label = st.selectbox("Düzenlenecek Kalem", list(edit_dict.keys()), key=f"sel_k_edit_box_{secili_id}")
+                                sel_k_row = edit_dict.get(sel_k_label, ak_df.iloc[0])
 
                                 with st.form(f"form_edit_kalem_{sel_k_row['id']}"):
                                     ed_c1, ed_c2 = st.columns(2)
@@ -1810,11 +1814,11 @@ if menu == "Dosya Arama & Çalışma Masası":
                             col_del_k1, col_del_k2 = st.columns([3, 1])
                             with col_del_k1:
                                 ak_sil_dict = {f"ID: {r['id']} | {r['kalem_adi']} ({format_tr_money(r['tutar'])})": r['id'] for _, r in ak_df.iterrows()}
-                                s_ak_id = ak_sil_dict[st.selectbox("Silinecek Alacak Kalemi", list(ak_sil_dict.keys()), key="del_ak_select")]
+                                s_ak_id = ak_sil_dict.get(st.selectbox("Silinecek Alacak Kalemi", list(ak_sil_dict.keys()), key=f"del_ak_select_{secili_id}"))
                             with col_del_k2:
                                 st.write("")
                                 st.write("")
-                                if st.button("🗑️ Kalemi Sil", use_container_width=True):
+                                if s_ak_id and st.button("🗑️ Kalemi Sil", key=f"btn_del_ak_{s_ak_id}", use_container_width=True):
                                     cursor.execute("DELETE FROM alacak_kalemleri WHERE id = ?", (s_ak_id,))
                                     cursor.execute("SELECT SUM(tutar), SUM(t_oncesi_faiz) FROM alacak_kalemleri WHERE dosya_id = ?", (secili_id,))
                                     tot_p, tot_i = cursor.fetchone()
@@ -1832,15 +1836,15 @@ if menu == "Dosya Arama & Çalışma Masası":
 
                         st.markdown("---")
                         st.markdown("##### ➕ Yeni Alacak Kalemi Ekle")
-                        with st.form("form_add_alacak_kalemi"):
+                        with st.form(f"form_add_alacak_kalemi_{secili_id}"):
                             ak_c1, ak_c2 = st.columns(2)
                             with ak_c1:
-                                ak_ad = st.text_input("Kalem Adı", placeholder="Örn: Karşılıksız Çek Bedeli, Çek Tazminatı")
-                                ak_tur = st.selectbox("Kalem Türü", ["Asıl Alacak", "Tazminat", "Takip Öncesi Faiz", "Masraf/Komisyon", "Diğer"])
-                                ak_tutar = parse_tr_money(st.text_input("Kalem Tutarı (TL)", value="0,00", key="ak_in_tutar"))
-                                ak_toncesi = parse_tr_money(st.text_input("Takip Öncesi Faiz (TL)", value="0,00", key="ak_in_toncesi"))
+                                ak_ad = st.text_input("Kalem Adı", placeholder="Örn: Karşılıksız Çek Bedeli, Çek Tazminatı", key=f"ak_in_ad_{secili_id}")
+                                ak_tur = st.selectbox("Kalem Türü", ["Asıl Alacak", "Tazminat", "Takip Öncesi Faiz", "Masraf/Komisyon", "Diğer"], key=f"ak_in_tur_{secili_id}")
+                                ak_tutar = parse_tr_money(st.text_input("Kalem Tutarı (TL)", value="0,00", key=f"ak_in_tutar_{secili_id}"))
+                                ak_toncesi = parse_tr_money(st.text_input("Takip Öncesi Faiz (TL)", value="0,00", key=f"ak_in_toncesi_{secili_id}"))
                             with ak_c2:
-                                ak_faiz_tipi = st.selectbox("Kalemin Faiz Türü", FAIZ_TURLERI_LISTESI, key="ak_in_faiztipi")
+                                ak_faiz_tipi = st.selectbox("Kalemin Faiz Türü", FAIZ_TURLERI_LISTESI, key=f"ak_in_faiztipi_{secili_id}")
                                 if ak_faiz_tipi == "Ticari Avans Faizi (%48.00)":
                                     ak_oran = 48.0
                                 elif ak_faiz_tipi == "TCMB Reeskont Faizi (%39.75)":
@@ -1850,8 +1854,8 @@ if menu == "Dosya Arama & Çalışma Masası":
                                 elif ak_faiz_tipi == "Faizsiz":
                                     ak_oran = 0.0
                                 else:
-                                    ak_oran = st.number_input("Faiz Oranı (%)", value=30.0, step=0.5, key="ak_in_oran")
-                                ak_sorumlu = st.text_input("Sorumlu Borçlu(lar)", value="Tüm Borçlular", help="Yalnızca belirli bir borçlu sorumluysa buraya unvanını yazabilirsiniz.")
+                                    ak_oran = st.number_input("Faiz Oranı (%)", value=30.0, step=0.5, key=f"ak_in_oran_{secili_id}")
+                                ak_sorumlu = st.text_input("Sorumlu Borçlu(lar)", value="Tüm Borçlular", key=f"ak_in_sorumlu_{secili_id}", help="Yalnızca belirli bir borçlu sorumluysa buraya unvanını yazabilirsiniz.")
                             
                             if st.form_submit_button("Kalemi Dosyaya Ekle", type="primary"):
                                 if ak_faiz_tipi != "Özel Oran":
@@ -1882,13 +1886,13 @@ if menu == "Dosya Arama & Çalışma Masası":
                                     st.warning("Lütfen kalem adı ve 0'dan büyük bir tutar girin.")
 
                     with t_durum:
-                        c_itiraz = st.checkbox("🚨 İtiraz Edildi (Takip Durduruldu)", value=bool(secili_dosya['itiraz_edildi']))
-                        c_kesin = st.checkbox("✅ Takip Kesinleşti (Haciz Safhası)", value=bool(secili_dosya['kesinlesme_durumu']))
+                        c_itiraz = st.checkbox("🚨 İtiraz Edildi (Takip Durduruldu)", value=bool(secili_dosya['itiraz_edildi']), key=f"c_itiraz_{secili_id}")
+                        c_kesin = st.checkbox("✅ Takip Kesinleşti (Haciz Safhası)", value=bool(secili_dosya['kesinlesme_durumu']), key=f"c_kesin_{secili_id}")
                         durum_opt = ["Açık", "Protokol Yapıldı", "İflas", "Kapatıldı / İnfaz"]
                         cur_index = durum_opt.index(secili_dosya['durum']) if secili_dosya['durum'] in durum_opt else 0
-                        durum_aciklama = st.selectbox("Dosya İlerleme Statüsü", durum_opt, index=cur_index)
+                        durum_aciklama = st.selectbox("Dosya İlerleme Statüsü", durum_opt, index=cur_index, key=f"sel_durum_{secili_id}")
                         
-                        if st.button("Statü Güncelle", type="primary"):
+                        if st.button("Statü Güncelle", type="primary", key=f"btn_upd_statu_{secili_id}"):
                             cursor.execute("UPDATE dosyalar SET itiraz_edildi = ?, kesinlesme_durumu = ?, durum = ? WHERE id = ?", (1 if c_itiraz else 0, 1 if c_kesin else 0, durum_aciklama, secili_id))
                             conn.commit()
                             st.success("Durum güncellendi!")
@@ -1898,15 +1902,15 @@ if menu == "Dosya Arama & Çalışma Masası":
                         st.markdown("##### ➕ Kısmi Ödeme Kaydet")
                         c_th1, c_th2, c_th3 = st.columns(3)
                         with c_th1:
-                            t_tarih = st.date_input("Tahsilat Tarihi", value=date.today(), key="in_t_date")
+                            t_tarih = st.date_input("Tahsilat Tarihi", value=date.today(), key=f"in_t_date_{secili_id}")
                         with c_th2:
-                            raw_t_tutar = st.text_input("Tutar (TL)", value="0,00", key="in_t_amt")
+                            raw_t_tutar = st.text_input("Tutar (TL)", value="0,00", key=f"in_t_amt_{secili_id}")
                             t_tutar = parse_tr_money(raw_t_tutar)
                             st.caption(f"İşlenecek: **{format_tr_money(t_tutar)}**")
                         with c_th3:
-                            t_aciklama = st.text_input("Açıklama", placeholder="Örn: Haciz, Haricen, UYAP", key="in_t_desc")
+                            t_aciklama = st.text_input("Açıklama", placeholder="Örn: Haciz, Haricen, UYAP", key=f"in_t_desc_{secili_id}")
 
-                        if st.button("Ödemeyi İşle", type="primary"):
+                        if st.button("Ödemeyi İşle", type="primary", key=f"btn_add_tahsilat_{secili_id}"):
                             if t_tutar > 0:
                                 cursor.execute("INSERT INTO tahsilatlar (dosya_id, tarih, tutar, aciklama) VALUES (?, ?, ?, ?)", (secili_id, str(t_tarih), t_tutar, t_aciklama))
                                 cursor.execute("INSERT INTO dosya_notlari (dosya_id, tarih, not_icerik) VALUES (?, ?, ?)", (secili_id, str(t_tarih), f"{format_tr_money(t_tutar)} tahsilat yapıldı. ({t_aciklama})"))
@@ -1920,32 +1924,39 @@ if menu == "Dosya Arama & Çalışma Masası":
                             st.dataframe(pd.DataFrame(mahsup_list), use_container_width=True, hide_index=True)
                             
                             t_opt = {f"ID: {r['id']} | {r['tarih']} - {format_tr_money(r['tutar'])}": r['id'] for _, r in tahsilat_df.iterrows()}
-                            sec_t_id = t_opt[st.selectbox("Düzeltilecek Tahsilat", list(t_opt.keys()))]
-                            r_t = tahsilat_df[tahsilat_df['id'] == sec_t_id].iloc[0]
+                            sel_th_label = st.selectbox("Düzeltilecek Tahsilat", list(t_opt.keys()), key=f"sel_th_box_{secili_id}")
+                            sec_t_id = t_opt.get(sel_th_label)
+                            matching_th = tahsilat_df[tahsilat_df['id'] == sec_t_id]
+                            if not matching_th.empty:
+                                r_t = matching_th.iloc[0]
 
-                            ce1, ce2, ce3 = st.columns(3)
-                            with ce1:
-                                edt_t_date = st.date_input("Düzeltme Tarihi", value=datetime.strptime(str(r_t['tarih']), "%Y-%m-%d").date())
-                            with ce2:
-                                edt_t_amt = parse_tr_money(st.text_input("Düzeltme Tutarı", value=str(r_t['tutar']).replace(".", ",")))
-                            with ce3:
-                                edt_t_dsc = st.text_input("Düzeltme Açıklaması", value=str(r_t['aciklama'] or ''))
+                                ce1, ce2, ce3 = st.columns(3)
+                                with ce1:
+                                    try:
+                                        def_th_d = datetime.strptime(str(r_t['tarih']), "%Y-%m-%d").date()
+                                    except Exception:
+                                        def_th_d = date.today()
+                                    edt_t_date = st.date_input("Düzeltme Tarihi", value=def_th_d, key=f"edt_t_date_{sec_t_id}")
+                                with ce2:
+                                    edt_t_amt = parse_tr_money(st.text_input("Düzeltme Tutarı", value=str(r_t['tutar']).replace(".", ","), key=f"edt_t_amt_{sec_t_id}"))
+                                with ce3:
+                                    edt_t_dsc = st.text_input("Düzeltme Açıklaması", value=str(r_t['aciklama'] or ''), key=f"edt_t_dsc_{sec_t_id}")
 
-                            btn_th1, btn_th2 = st.columns(2)
-                            with btn_th1:
-                                if st.button("Tahsilat Düzenle"):
-                                    cursor.execute("UPDATE tahsilatlar SET tarih = ?, tutar = ?, aciklama = ? WHERE id = ?", (str(edt_t_date), edt_t_amt, edt_t_dsc, sec_t_id))
-                                    conn.commit()
-                                    st.rerun()
-                            with btn_th2:
-                                if st.button("🗑️ Tahsilatı Sil"):
-                                    cursor.execute("DELETE FROM tahsilatlar WHERE id = ?", (sec_t_id,))
-                                    conn.commit()
-                                    st.rerun()
+                                btn_th1, btn_th2 = st.columns(2)
+                                with btn_th1:
+                                    if st.button("Tahsilat Düzenle", key=f"btn_edit_tahsilat_{sec_t_id}"):
+                                        cursor.execute("UPDATE tahsilatlar SET tarih = ?, tutar = ?, aciklama = ? WHERE id = ?", (str(edt_t_date), edt_t_amt, edt_t_dsc, sec_t_id))
+                                        conn.commit()
+                                        st.rerun()
+                                with btn_th2:
+                                    if st.button("🗑️ Tahsilatı Sil", key=f"btn_del_tahsilat_{sec_t_id}"):
+                                        cursor.execute("DELETE FROM tahsilatlar WHERE id = ?", (sec_t_id,))
+                                        conn.commit()
+                                        st.rerun()
 
                     with t_notlar:
                         st.markdown("##### ➕ Yeni Not Ekle")
-                        with st.form(f"form_not_add_{secili_id}"):
+                        with st.form(f"form_not_add_{secili_id}", clear_on_submit=True):
                             cn1, cn2 = st.columns([1, 3])
                             with cn1:
                                 n_date = st.date_input("Not Tarihi", value=date.today(), key=f"new_not_date_{secili_id}")
@@ -1970,36 +1981,38 @@ if menu == "Dosya Arama & Çalışma Masası":
                             st.markdown("##### ✏️ Not Düzenle veya Sil")
                             not_dict = {f"#{r['id']} | {r['tarih']} - {str(r['not_icerik'])[:55]}...": r['id'] for _, r in notlar_df.iterrows()}
                             sel_not_label = st.selectbox("İşlem Yapılacak Notu Seçin", list(not_dict.keys()), key=f"sel_not_box_{secili_id}")
-                            sel_not_id = not_dict[sel_not_label]
-                            sel_not_row = notlar_df[notlar_df['id'] == sel_not_id].iloc[0]
+                            sel_not_id = not_dict.get(sel_not_label)
+                            matching_note = notlar_df[notlar_df['id'] == sel_not_id]
+                            if not matching_note.empty:
+                                sel_not_row = matching_note.iloc[0]
 
-                            try:
-                                def_not_date = datetime.strptime(str(sel_not_row['tarih']), "%Y-%m-%d").date()
-                            except Exception:
-                                def_not_date = date.today()
+                                try:
+                                    def_not_date = datetime.strptime(str(sel_not_row['tarih']), "%Y-%m-%d").date()
+                                except Exception:
+                                    def_not_date = date.today()
 
-                            ed_nc1, ed_nc2 = st.columns([1, 3])
-                            with ed_nc1:
-                                edt_n_date = st.date_input("Tarih Düzenle", value=def_not_date, key=f"edt_date_{sel_not_id}")
-                            with ed_nc2:
-                                edt_n_text = st.text_area("Not Metni Düzenle", value=str(sel_not_row['not_icerik']), height=80, key=f"edt_text_{sel_not_id}")
+                                ed_nc1, ed_nc2 = st.columns([1, 3])
+                                with ed_nc1:
+                                    edt_n_date = st.date_input("Tarih Düzenle", value=def_not_date, key=f"edt_date_{sel_not_id}")
+                                with ed_nc2:
+                                    edt_n_text = st.text_area("Not Metni Düzenle", value=str(sel_not_row['not_icerik']), height=80, key=f"edt_text_{sel_not_id}")
 
-                            btn_n_col1, btn_n_col2 = st.columns(2)
-                            with btn_n_col1:
-                                if st.button("💾 Notu Güncelle", key=f"btn_upd_note_{sel_not_id}", type="primary", use_container_width=True):
-                                    if edt_n_text.strip():
-                                        cursor.execute("UPDATE dosya_notlari SET tarih = ?, not_icerik = ? WHERE id = ?", (str(edt_n_date), edt_n_text.strip(), sel_not_id))
+                                btn_n_col1, btn_n_col2 = st.columns(2)
+                                with btn_n_col1:
+                                    if st.button("💾 Notu Güncelle", key=f"btn_upd_note_{sel_not_id}", type="primary", use_container_width=True):
+                                        if edt_n_text.strip():
+                                            cursor.execute("UPDATE dosya_notlari SET tarih = ?, not_icerik = ? WHERE id = ?", (str(edt_n_date), edt_n_text.strip(), sel_not_id))
+                                            conn.commit()
+                                            st.success("Not başarıyla güncellendi!")
+                                            st.rerun()
+                                        else:
+                                            st.warning("Not içeriği boş bırakılamaz.")
+                                with btn_n_col2:
+                                    if st.button("🗑️ Bu Notu Sil", key=f"btn_del_note_{sel_not_id}", use_container_width=True):
+                                        cursor.execute("DELETE FROM dosya_notlari WHERE id = ?", (sel_not_id,))
                                         conn.commit()
-                                        st.success("Not başarıyla güncellendi!")
+                                        st.success("Not silindi!")
                                         st.rerun()
-                                    else:
-                                        st.warning("Not içeriği boş bırakılamaz.")
-                            with btn_n_col2:
-                                if st.button("🗑️ Bu Notu Sil", key=f"btn_del_note_{sel_not_id}", use_container_width=True):
-                                    cursor.execute("DELETE FROM dosya_notlari WHERE id = ?", (sel_not_id,))
-                                    conn.commit()
-                                    st.success("Not silindi!")
-                                    st.rerun()
                         else:
                             st.info("Bu dosyaya ait henüz kayıtlı bir not bulunmuyor.")
 
@@ -2024,7 +2037,7 @@ if menu == "Dosya Arama & Çalışma Masası":
                             "dosya_no": secili_dosya['dosya_no'],
                             "takip_tarihi": secili_dosya['takip_tarihi'],
                             "durum": secili_dosya['durum'],
-                            "İtiraz": secili_dosya['İtiraz'],
+                            "İtiraz": secili_dosya['İtiraz'] if 'İtiraz' in secili_dosya else ('🚨 İtiraz Edildi' if secili_dosya.get('itiraz_edildi') == 1 else 'Normal'),
                             "ana_para": float(secili_dosya['ana_para']),
                             "t_oncesi_faiz": float(secili_dosya['t_oncesi_faiz']),
                             "rem_pre_i": rem_pre_i,
@@ -2173,13 +2186,15 @@ if menu == "Dosya Arama & Çalışma Masası":
                             st.rerun()
 
                         st.write("")
-                        if st.button("🗑️ Dosyayı Kalıcı Olarak Sil"):
+                        if st.button("🗑️ Dosyayı Kalıcı Olarak Sil", key=f"btn_del_dosya_{secili_id}"):
                             cursor.execute("DELETE FROM dosyalar WHERE id = ?", (secili_id,))
                             cursor.execute("DELETE FROM tahsilatlar WHERE dosya_id = ?", (secili_id,))
                             cursor.execute("DELETE FROM masraflar WHERE dosya_id = ?", (secili_id,))
                             cursor.execute("DELETE FROM dosya_notlari WHERE dosya_id = ?", (secili_id,))
+                            cursor.execute("DELETE FROM alacak_kalemleri WHERE dosya_id = ?", (secili_id,))
                             conn.commit()
                             st.session_state["aktif_dosya_id"] = None
+                            st.session_state["last_clicked_df_row"] = None
                             st.rerun()
 
                 # SAĞ: CANLI MALİ CETVEL
@@ -2308,15 +2323,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 alacak_kalemleri_df=m_ak_df
             )
 
-            is_infaz = bool(re.search(r"Kapatıldı|İnfaz|Kapalı", str(d_row.get('durum', '')), re.I))
             ana_para = float(d_row['ana_para'])
-            if is_infaz:
-                tahsil_asıl = ana_para
-                kalan_alacak_goster = 0.0
-            else:
-                # Müvekkil raporunda yalnızca asıl alacak bazlı net mahsup:
-                tahsil_asıl = min(ana_para, float(tot_pay))
-                kalan_alacak_goster = max(0.0, ana_para - tahsil_asıl)
 
             not_metinleri = [nr['not_icerik'] for _, nr in n_df.iterrows()]
             son_not = not_metinleri[0] if not_metinleri else "İşlem aşamasında."
@@ -2327,8 +2334,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 "Borçlu(lar)": str(d_row['borclu']),
                 "Takip Türü": str(d_row.get('takip_turu', 'Örnek No: 7')),
                 "Başlangıç Asıl Alacak": float(d_row['ana_para']),
-                "Tahsil Edilen": tahsil_asıl,
-                "Kalan Asıl Alacak": kalan_alacak_goster,
+                "Tahsil Edilen": float(tot_pay),
                 "Dosya Statüsü": f"{d_row['durum']} ({'İtirazlı' if d_row['itiraz_edildi']==1 else 'Normal'})",
                 "Müvekkile Rapor Notu": son_not
             })
@@ -2349,7 +2355,6 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 "dosya_id": None,
                 "Başlangıç Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
                 "Tahsil Edilen": st.column_config.NumberColumn(format="%.2f TL"),
-                "Kalan Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
                 "Müvekkile Rapor Notu": st.column_config.TextColumn(width="large")
             }
         )
@@ -2362,24 +2367,24 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     d_id_val = r_item.get("dosya_id")
                     cur_not_txt = str(r_item.get("Müvekkile Rapor Notu", "")).strip()
                     if d_id_val and cur_not_txt:
-                        cursor.execute("INSERT INTO dosya_notlari (dosya_id, tarih, not_icerik) VALUES (?, ?, ?)", (int(d_id_val), str(date.today()), cur_not_txt))
-                        kaydedilen += 1
+                        check_cur = cursor.execute("SELECT not_icerik FROM dosya_notlari WHERE dosya_id = ? ORDER BY id DESC LIMIT 1", (int(d_id_val),)).fetchone()
+                        if not check_cur or check_cur[0] != cur_not_txt:
+                            cursor.execute("INSERT INTO dosya_notlari (dosya_id, tarih, not_icerik) VALUES (?, ?, ?)", (int(d_id_val), str(date.today()), cur_not_txt))
+                            kaydedilen += 1
                 conn.commit()
                 st.success(f"✅ {kaydedilen} dosyanın rapor notu dosya geçmişine başarıyla kaydedildi!")
                 st.rerun()
 
         top_baslangic = float(edited_report["Başlangıç Asıl Alacak"].sum()) if not edited_report.empty else 0.0
         top_tahsilat = float(edited_report["Tahsil Edilen"].sum()) if not edited_report.empty else 0.0
-        top_kalan = float(edited_report["Kalan Asıl Alacak"].sum()) if not edited_report.empty else 0.0
 
         st.write("")
         tahsil_orani_yuzde = (top_tahsilat / top_baslangic * 100.0) if top_baslangic > 0 else 0.0
-        rk1, rk2, rk3, rk4, rk5 = st.columns(5)
+        rk1, rk2, rk3, rk4 = st.columns(4)
         rk1.metric("Toplam Dosya", f"{len(edited_report)} Adet")
         rk2.metric("Portföy Asıl Alacak", format_tr_money(top_baslangic))
-        rk3.metric("Tahsil Edilen Tutar", format_tr_money(top_tahsilat))
-        rk4.metric("Kalan Müvekkil Alacağı", format_tr_money(top_kalan))
-        rk5.metric("🎯 Tahsilat Başarı Oranı", f"%{tahsil_orani_yuzde:.2f}")
+        rk3.metric("Toplam Tahsil Edilen", format_tr_money(top_tahsilat))
+        rk4.metric("🎯 Portföy Tahsilat Başarı Oranı", f"%{tahsil_orani_yuzde:.2f}")
 
         # Excel Export of the Edited Data
         wb_c = openpyxl.Workbook()
@@ -2402,14 +2407,14 @@ elif menu == "Müvekkil Portföy & Raporlama":
             top=Side(style='thin', color='D1D5DB'), bottom=Side(style='thin', color='D1D5DB')
         )
 
-        ws_c.merge_cells("A1:H1")
+        ws_c.merge_cells("A1:G1")
         ws_c["A1"] = f"JUS LEGAL | {secilen_muvekkil.upper()} İCRA PORTFÖYÜ DURUM RAPORU"
         ws_c["A1"].font = font_title
         ws_c["A1"].fill = fill_header
         ws_c["A1"].alignment = Alignment(horizontal="center", vertical="center")
         ws_c.row_dimensions[1].height = 36
 
-        ws_c.merge_cells("A2:H2")
+        ws_c.merge_cells("A2:G2")
         ws_c["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Dosya: {len(edited_report)}"
         ws_c["A2"].font = Font(name="Arial", size=9, italic=True, color="334155")
         ws_c["A2"].alignment = Alignment(horizontal="center", vertical="center")
@@ -2419,9 +2424,8 @@ elif menu == "Müvekkil Portföy & Raporlama":
             "Dosya No / İcra Dairesi", 
             "Borçlu Firma / Kişi", 
             "Takip Türü", 
-            "Asıl Alacak", 
+            "Başlangıç Asıl Alacak", 
             "Tahsil Edilen", 
-            "Kalan Asıl Alacak", 
             "Dosya Statüsü", 
             "Müvekkile Rapor Notu / Son Durum"
         ]
@@ -2442,7 +2446,6 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 str(row_data["Takip Türü"]),
                 float(row_data["Başlangıç Asıl Alacak"]),
                 float(row_data["Tahsil Edilen"]),
-                float(row_data["Kalan Asıl Alacak"]),
                 str(row_data["Dosya Statüsü"]),
                 str(row_data["Müvekkile Rapor Notu"])
             ]
@@ -2450,11 +2453,11 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 cell = ws_c.cell(row=row_p, column=col_idx, value=val)
                 cell.font = font_reg
                 cell.border = thin_border
-                if isinstance(val, (float, int)) and col_idx in [4, 5, 6]:
+                if isinstance(val, (float, int)) and col_idx in [4, 5]:
                     cell.number_format = '#,##0.00 "TL"'
                     cell.alignment = Alignment(horizontal="right", vertical="top")
                 else:
-                    cell.alignment = Alignment(horizontal="center" if col_idx in [1, 3, 7] else "left", vertical="top", wrap_text=(col_idx == 8))
+                    cell.alignment = Alignment(horizontal="center" if col_idx in [1, 3, 6] else "left", vertical="top", wrap_text=(col_idx == 7))
                 if row_p % 2 == 1:
                     cell.fill = fill_zebra
             ws_c.row_dimensions[row_p].height = 36
@@ -2465,11 +2468,10 @@ elif menu == "Müvekkil Portföy & Raporlama":
 
         totals_map = {
             4: top_baslangic,
-            5: top_tahsilat,
-            6: top_kalan
+            5: top_tahsilat
         }
 
-        for col_idx in range(1, 9):
+        for col_idx in range(1, 8):
             c_tot = ws_c.cell(row=row_p, column=col_idx)
             c_tot.fill = fill_total
             c_tot.font = font_total
@@ -2483,11 +2485,10 @@ elif menu == "Müvekkil Portföy & Raporlama":
         ws_c.column_dimensions["A"].width = 28
         ws_c.column_dimensions["B"].width = 26
         ws_c.column_dimensions["C"].width = 24
-        ws_c.column_dimensions["D"].width = 20
-        ws_c.column_dimensions["E"].width = 20
+        ws_c.column_dimensions["D"].width = 22
+        ws_c.column_dimensions["E"].width = 22
         ws_c.column_dimensions["F"].width = 20
-        ws_c.column_dimensions["G"].width = 20
-        ws_c.column_dimensions["H"].width = 50
+        ws_c.column_dimensions["G"].width = 50
 
         buf_c = io.BytesIO()
         wb_c.save(buf_c)
