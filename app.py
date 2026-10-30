@@ -2344,6 +2344,26 @@ elif menu == "Müvekkil Portföy & Raporlama":
         secilen_muvekkil = st.selectbox("Raporlanacak Müvekkil Cari Seçin", alacaklilar)
         m_dosyalar = pd.read_sql_query("SELECT * FROM dosyalar WHERE alacakli = ? ORDER BY id DESC", conn, params=[secilen_muvekkil])
 
+        if m_dosyalar.empty:
+            m_ids = "(-1)"
+        else:
+            m_ids = f"({','.join(map(str, m_dosyalar['id'].tolist()))})"
+        m_all_t = pd.read_sql_query(f"SELECT * FROM tahsilatlar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
+        m_all_m = pd.read_sql_query(f"SELECT * FROM masraflar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
+        m_all_n = pd.read_sql_query(f"SELECT * FROM dosya_notlari WHERE dosya_id IN {m_ids} ORDER BY tarih DESC, id DESC", conn)
+        m_all_ak = pd.read_sql_query(f"SELECT * FROM alacak_kalemleri WHERE dosya_id IN {m_ids}", conn)
+
+        font_title = Font(name="Arial", size=13, bold=True, color="FFFFFF")
+        font_sub = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        font_legend = Font(name="Arial", size=9, bold=True, color="475569")
+        font_reg = Font(name="Arial", size=10, color="000000")
+        font_total = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+        thin_border = Border(
+            left=Side(style='thin', color='D1D5DB'), right=Side(style='thin', color='D1D5DB'),
+            top=Side(style='thin', color='D1D5DB'), bottom=Side(style='thin', color='D1D5DB')
+        )
+        fill_zebra = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+
         st.markdown(f"**{secilen_muvekkil}** cari kartına bağlı toplam **{len(m_dosyalar)}** adet icra dosyası tespit edildi.")
         st.write("")
         secilen_format = st.radio(
@@ -2357,14 +2377,6 @@ elif menu == "Müvekkil Portföy & Raporlama":
         )
 
         if secilen_format == "📊 Format 1: Dosya Bazlı Portföy Durum Raporu":
-
-
-            m_ids = f"({','.join(map(str, m_dosyalar['id'].tolist()))})"
-            m_all_t = pd.read_sql_query(f"SELECT * FROM tahsilatlar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
-            m_all_m = pd.read_sql_query(f"SELECT * FROM masraflar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
-            m_all_n = pd.read_sql_query(f"SELECT * FROM dosya_notlari WHERE dosya_id IN {m_ids} ORDER BY tarih DESC, id DESC", conn)
-            m_all_ak = pd.read_sql_query(f"SELECT * FROM alacak_kalemleri WHERE dosya_id IN {m_ids}", conn)
-
             m_t_grp = dict(tuple(m_all_t.groupby("dosya_id"))) if not m_all_t.empty else {}
             m_m_grp = dict(tuple(m_all_m.groupby("dosya_id"))) if not m_all_m.empty else {}
             m_n_grp = dict(tuple(m_all_n.groupby("dosya_id"))) if not m_all_n.empty else {}
@@ -2871,6 +2883,18 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     fill_k_sub = PatternFill(start_color="1F2421", end_color="1F2421", fill_type="solid")
                     fill_k_legend = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
                     fill_k_total = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
+                    fill_k_zebra = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+
+                    font_k_title = Font(name="Arial", size=13, bold=True, color="FFFFFF")
+                    font_k_sub = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+                    font_k_legend = Font(name="Arial", size=9, bold=True, color="475569")
+                    font_k_reg = Font(name="Arial", size=10, color="000000")
+                    font_k_total = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+
+                    thin_border_k = Border(
+                        left=Side(style='thin', color='D1D5DB'), right=Side(style='thin', color='D1D5DB'),
+                        top=Side(style='thin', color='D1D5DB'), bottom=Side(style='thin', color='D1D5DB')
+                    )
 
                     fill_v_gonderildi = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
                     font_v_gonderildi = Font(name="Arial", size=10, bold=True, color="166534")
@@ -2886,7 +2910,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
 
                     ws_k.merge_cells("A1:J1")
                     ws_k["A1"] = f"JUS LEGAL | {secilen_muvekkil.upper()} TAHSİLAT & VİRMAN MUTABAKAT CETVELİ"
-                    ws_k["A1"].font = font_title
+                    ws_k["A1"].font = font_k_title
                     ws_k["A1"].fill = fill_k_header
                     ws_k["A1"].alignment = Alignment(horizontal="center", vertical="center")
                     ws_k.row_dimensions[1].height = 36
@@ -2899,10 +2923,10 @@ elif menu == "Müvekkil Portföy & Raporlama":
 
                     ws_k.merge_cells("A3:J3")
                     ws_k["A3"] = f"DURUM LEJANDI:  ✅ Müvekkile Gönderildi ({cnt_gonderildi}) [Yeşil]   |   ⏳ Gönderim Bekliyor ({cnt_bekliyor}) [Sarı]   |   💼 Masraf/Vekalet Mahsubu ({cnt_mahsubu}) [Mavi]   |   🏦 İcra Dairesinde ({cnt_icra}) [Gri]"
-                    ws_k["A3"].font = font_legend
+                    ws_k["A3"].font = font_k_legend
                     ws_k["A3"].fill = fill_k_legend
                     ws_k["A3"].alignment = Alignment(horizontal="center", vertical="center")
-                    ws_k["A3"].border = thin_border
+                    ws_k["A3"].border = thin_border_k
                     ws_k.row_dimensions[3].height = 22
 
                     headers_k = [
@@ -2921,9 +2945,9 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     for c_i, h_txt in enumerate(headers_k, start=1):
                         c = ws_k.cell(row=4, column=c_i, value=h_txt)
                         c.fill = fill_k_sub
-                        c.font = font_sub
+                        c.font = font_k_sub
                         c.alignment = Alignment(horizontal="center", vertical="center")
-                        c.border = thin_border
+                        c.border = thin_border_k
                     ws_k.row_dimensions[4].height = 26
 
                     row_k_idx = 5
@@ -2960,7 +2984,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                             cell.font = font_reg
                             cell.border = thin_border
                             if row_k_idx % 2 == 1:
-                                cell.fill = fill_zebra
+                                cell.fill = fill_k_zebra
 
                             if col_idx == 9:
                                 cell.fill = v_fill
@@ -2977,7 +3001,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                         ws_k.row_dimensions[row_k_idx].height = 32
                         row_k_idx += 1
 
-                    ws_k.cell(row=row_k_idx, column=1, value="GENEL TOPLAM MUTABAKAT").font = font_total
+                    ws_k.cell(row=row_k_idx, column=1, value="GENEL TOPLAM MUTABAKAT").font = font_k_total
                     ws_k.merge_cells(start_row=row_k_idx, start_column=1, end_row=row_k_idx, end_column=4)
 
                     k_totals_map = {
