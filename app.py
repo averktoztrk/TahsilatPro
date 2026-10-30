@@ -382,6 +382,14 @@ def format_tr_money(amount):
     formatted = f"{float(amount):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"{formatted}-TL"
 
+def make_safe_filename(text, suffix):
+    tr_map = str.maketrans("çğıöşüÇĞİÖŞÜ ", "cgiosuCGIOSU_")
+    cleaned = str(text or "Rapor").translate(tr_map)
+    cleaned = re.sub(r'[^a-zA-Z0-9_\-]', '', cleaned)[:35].strip('_')
+    if not cleaned:
+        cleaned = "Jus_Legal"
+    return f"{cleaned}_{suffix}.xlsx"
+
 def hesapla_icra_vekalet_ucreti(takip_cikisi):
     if takip_cikisi <= 0:
         return 0.0
@@ -2112,10 +2120,12 @@ if menu == "Dosya Arama & Çalışma Masası":
 
                         st.download_button(
                             "📥 Kurumsal Excel Raporunu İndir (.xlsx)",
-                            data=excel_bytes,
-                            file_name=f"{secili_dosya['borclu'][:20]}_Hesap_Cetveli.xlsx",
+                            data=excel_bytes.getvalue() if hasattr(excel_bytes, 'getvalue') else excel_bytes,
+                            file_name=make_safe_filename(secili_dosya.get('borclu', 'Dosya'), "Hesap_Cetveli"),
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            type="primary"
+                            type="primary",
+                            on_click="ignore",
+                            key=f"btn_dl_exec_{secili_id}"
                         )
 
                     with t_ayar:
@@ -2335,12 +2345,18 @@ elif menu == "Müvekkil Portföy & Raporlama":
         m_dosyalar = pd.read_sql_query("SELECT * FROM dosyalar WHERE alacakli = ? ORDER BY id DESC", conn, params=[secilen_muvekkil])
 
         st.markdown(f"**{secilen_muvekkil}** cari kartına bağlı toplam **{len(m_dosyalar)}** adet icra dosyası tespit edildi.")
-        tab_portfoy, tab_kasa = st.tabs([
-            "📊 Format 1: Dosya Bazlı Portföy Durum Raporu",
-            "💰 Format 2: Müvekkil Tahsilat & Virman (Kasa) Cetveli"
-        ])
+        st.write("")
+        secilen_format = st.radio(
+            "📋 Görüntülenecek ve İndirilecek Rapor Formatı Seçin:",
+            [
+                "📊 Format 1: Dosya Bazlı Portföy Durum Raporu",
+                "💰 Format 2: Müvekkil Tahsilat & Virman (Kasa) Cetveli"
+            ],
+            horizontal=True,
+            key=f"rep_fmt_selector_{secilen_muvekkil}"
+        )
 
-        with tab_portfoy:
+        if secilen_format == "📊 Format 1: Dosya Bazlı Portföy Durum Raporu":
 
 
             m_ids = f"({','.join(map(str, m_dosyalar['id'].tolist()))})"
@@ -2686,19 +2702,21 @@ elif menu == "Müvekkil Portföy & Raporlama":
 
             buf_c = io.BytesIO()
             wb_c.save(buf_c)
-            buf_c.seek(0)
+            excel_bytes_c = buf_c.getvalue()
 
             st.write("")
             st.download_button(
-                label="📥 Düzenlenmiş Müvekkil Raporunu İndir (.xlsx)",
-                data=buf_c,
-                file_name=f"{secilen_muvekkil}_Muvakkil_Durum_Raporu.xlsx",
+                label="📥 Format 1: Portföy Durum Raporunu İndir (.xlsx)",
+                data=excel_bytes_c,
+                file_name=make_safe_filename(secilen_muvekkil, "Portfoy_Durum_Raporu"),
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
-                use_container_width=True
+                use_container_width=True,
+                on_click="ignore",
+                key=f"btn_dl_portfoy_{secilen_muvekkil}"
             )
 
-        with tab_kasa:
+        elif secilen_format == "💰 Format 2: Müvekkil Tahsilat & Virman (Kasa) Cetveli":
             st.write("")
             st.markdown(f"#### 💰 {secilen_muvekkil} - Kasa, Tahsilat & Virman Mutabakat Cetveli")
             st.caption("Müvekkilin icra dosyalarından tahsil edilen paraları, tahsilat tarihlerini, masraf/vekalet kesintilerini ve müvekkil hesabına virman edilecek net hakedişleri dökümleyin.")
@@ -2993,16 +3011,17 @@ elif menu == "Müvekkil Portföy & Raporlama":
 
                     buf_k = io.BytesIO()
                     wb_k.save(buf_k)
-                    buf_k.seek(0)
+                    excel_bytes_k = buf_k.getvalue()
 
                     st.write("")
                     st.download_button(
-                        label="📥 Müvekkil Tahsilat & Virman Cetvelini İndir (.xlsx)",
-                        data=buf_k,
-                        file_name=f"{secilen_muvekkil}_Tahsilat_Virman_Cetveli.xlsx",
+                        label="📥 Format 2: Tahsilat & Virman Cetvelini İndir (.xlsx)",
+                        data=excel_bytes_k,
+                        file_name=make_safe_filename(secilen_muvekkil, "Tahsilat_Virman_Cetveli"),
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         type="primary",
                         use_container_width=True,
+                        on_click="ignore",
                         key=f"btn_dl_virman_{secilen_muvekkil}"
                     )
 
