@@ -2335,361 +2335,678 @@ elif menu == "Müvekkil Portföy & Raporlama":
         m_dosyalar = pd.read_sql_query("SELECT * FROM dosyalar WHERE alacakli = ? ORDER BY id DESC", conn, params=[secilen_muvekkil])
 
         st.markdown(f"**{secilen_muvekkil}** cari kartına bağlı toplam **{len(m_dosyalar)}** adet icra dosyası tespit edildi.")
+        tab_portfoy, tab_kasa = st.tabs([
+            "📊 Format 1: Dosya Bazlı Portföy Durum Raporu",
+            "💰 Format 2: Müvekkil Tahsilat & Virman (Kasa) Cetveli"
+        ])
 
-        m_ids = f"({','.join(map(str, m_dosyalar['id'].tolist()))})"
-        m_all_t = pd.read_sql_query(f"SELECT * FROM tahsilatlar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
-        m_all_m = pd.read_sql_query(f"SELECT * FROM masraflar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
-        m_all_n = pd.read_sql_query(f"SELECT * FROM dosya_notlari WHERE dosya_id IN {m_ids} ORDER BY tarih DESC, id DESC", conn)
-        m_all_ak = pd.read_sql_query(f"SELECT * FROM alacak_kalemleri WHERE dosya_id IN {m_ids}", conn)
+        with tab_portfoy:
 
-        m_t_grp = dict(tuple(m_all_t.groupby("dosya_id"))) if not m_all_t.empty else {}
-        m_m_grp = dict(tuple(m_all_m.groupby("dosya_id"))) if not m_all_m.empty else {}
-        m_n_grp = dict(tuple(m_all_n.groupby("dosya_id"))) if not m_all_n.empty else {}
-        m_ak_grp = dict(tuple(m_all_ak.groupby("dosya_id"))) if not m_all_ak.empty else {}
 
-        m_emp_t = pd.DataFrame(columns=["id", "dosya_id", "tarih", "tutar", "aciklama"])
-        m_emp_m = pd.DataFrame(columns=["id", "dosya_id", "tarih", "aciklama", "masraf_tutari", "iade_tutari"])
-        m_emp_n = pd.DataFrame(columns=["id", "dosya_id", "tarih", "not_icerik"])
-        m_emp_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani", "kalem_turu", "sorumlu_borclular"])
+            m_ids = f"({','.join(map(str, m_dosyalar['id'].tolist()))})"
+            m_all_t = pd.read_sql_query(f"SELECT * FROM tahsilatlar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
+            m_all_m = pd.read_sql_query(f"SELECT * FROM masraflar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
+            m_all_n = pd.read_sql_query(f"SELECT * FROM dosya_notlari WHERE dosya_id IN {m_ids} ORDER BY tarih DESC, id DESC", conn)
+            m_all_ak = pd.read_sql_query(f"SELECT * FROM alacak_kalemleri WHERE dosya_id IN {m_ids}", conn)
 
-        rapor_satirlari = []
-        for _, d_row in m_dosyalar.iterrows():
-            d_id = int(d_row['id'])
-            t_df = m_t_grp.get(d_id, m_emp_t)
-            m_df = m_m_grp.get(d_id, m_emp_m)
-            n_df = m_n_grp.get(d_id, m_emp_n)
-            m_ak_df = m_ak_grp.get(d_id, m_emp_ak)
+            m_t_grp = dict(tuple(m_all_t.groupby("dosya_id"))) if not m_all_t.empty else {}
+            m_m_grp = dict(tuple(m_all_m.groupby("dosya_id"))) if not m_all_m.empty else {}
+            m_n_grp = dict(tuple(m_all_n.groupby("dosya_id"))) if not m_all_n.empty else {}
+            m_ak_grp = dict(tuple(m_all_ak.groupby("dosya_id"))) if not m_all_ak.empty else {}
 
-            calc_cache = st.session_state.setdefault("_calc_cache", {})
-            t_tutar_sum = float(t_df['tutar'].sum()) if not t_df.empty else 0.0
-            m_net_sum = float(m_df['masraf_tutari'].sum() - m_df['iade_tutari'].sum()) if not m_df.empty else 0.0
-            cache_key = (
-                int(d_id),
-                str(d_row.get('takip_tarihi', '')),
-                float(d_row.get('ana_para', 0.0)),
-                float(d_row.get('faiz_orani', 0.0)),
-                str(d_row.get('faiz_turu', '')),
-                float(d_row.get('t_oncesi_faiz', 0.0)),
-                len(t_df),
-                t_tutar_sum,
-                len(m_df),
-                m_net_sum,
-                len(m_ak_df),
-                date.today()
-            )
-            if cache_key in calc_cache:
-                rem_p, rem_i, tot_pay, *_ = calc_cache[cache_key]
-            else:
-                rem_p, rem_i, tot_pay, m_list, *_ = hesapla_kademeli_dosya_hesabi(
-                    d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], t_df,
-                    faiz_turu=d_row.get('faiz_turu', 'Özel Oran'),
-                    masraflar_df=m_df,
-                    alacak_kalemleri_df=m_ak_df
+            m_emp_t = pd.DataFrame(columns=["id", "dosya_id", "tarih", "tutar", "aciklama"])
+            m_emp_m = pd.DataFrame(columns=["id", "dosya_id", "tarih", "aciklama", "masraf_tutari", "iade_tutari"])
+            m_emp_n = pd.DataFrame(columns=["id", "dosya_id", "tarih", "not_icerik"])
+            m_emp_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani", "kalem_turu", "sorumlu_borclular"])
+
+            rapor_satirlari = []
+            for _, d_row in m_dosyalar.iterrows():
+                d_id = int(d_row['id'])
+                t_df = m_t_grp.get(d_id, m_emp_t)
+                m_df = m_m_grp.get(d_id, m_emp_m)
+                n_df = m_n_grp.get(d_id, m_emp_n)
+                m_ak_df = m_ak_grp.get(d_id, m_emp_ak)
+
+                calc_cache = st.session_state.setdefault("_calc_cache", {})
+                t_tutar_sum = float(t_df['tutar'].sum()) if not t_df.empty else 0.0
+                m_net_sum = float(m_df['masraf_tutari'].sum() - m_df['iade_tutari'].sum()) if not m_df.empty else 0.0
+                cache_key = (
+                    int(d_id),
+                    str(d_row.get('takip_tarihi', '')),
+                    float(d_row.get('ana_para', 0.0)),
+                    float(d_row.get('faiz_orani', 0.0)),
+                    str(d_row.get('faiz_turu', '')),
+                    float(d_row.get('t_oncesi_faiz', 0.0)),
+                    len(t_df),
+                    t_tutar_sum,
+                    len(m_df),
+                    m_net_sum,
+                    len(m_ak_df),
+                    date.today()
                 )
-                calc_cache[cache_key] = (rem_p, rem_i, tot_pay, m_list)
-
-            ana_para = float(d_row['ana_para'])
-
-            not_metinleri = [nr['not_icerik'] for _, nr in n_df.iterrows()]
-            son_not = not_metinleri[0] if not_metinleri else "İşlem aşamasında."
-
-            is_infaz_d = bool(re.search(r"Kapatıldı|İnfaz|Kapalı", str(d_row.get('durum', '')), re.I))
-            is_itiraz_d = bool(d_row.get('itiraz_edildi') == 1)
-            is_kesin_d = bool(d_row.get('kesinlesme_durumu') == 1)
-
-            if is_infaz_d:
-                statu_metni = "🔒 İnfazen Kapatıldı"
-                statu_kodu = "INFAZ"
-            elif is_itiraz_d:
-                statu_metni = "🚨 İtiraz Edildi (Takip Durdu)"
-                statu_kodu = "ITIRAZ"
-            elif is_kesin_d:
-                statu_metni = "✅ Kesinleşti (Haciz Safhasında)"
-                statu_kodu = "KESIN"
-            else:
-                statu_metni = "📂 Açık / Derdest (Tebliğ Aşamasında)"
-                statu_kodu = "ACIK"
-
-            raw_tarih = str(d_row.get('takip_tarihi', '')).strip()
-            try:
-                acilis_tarihi_fmt = datetime.strptime(raw_tarih[:10], "%Y-%m-%d").strftime("%d.%m.%Y")
-            except Exception:
-                acilis_tarihi_fmt = raw_tarih if raw_tarih else "-"
-
-            rapor_satirlari.append({
-                "dosya_id": d_id,
-                "statu_kodu": statu_kodu,
-                "Dosya No / Daire": f"{d_row['il']} {d_row['icra_dairesi']} {d_row['dosya_no']}",
-                "Açılış Tarihi": acilis_tarihi_fmt,
-                "Borçlu(lar)": str(d_row['borclu']),
-                "Takip Türü": str(d_row.get('takip_turu', 'Örnek No: 7')),
-                "Başlangıç Asıl Alacak": float(d_row['ana_para']),
-                "Tahsil Edilen": float(tot_pay),
-                "Dosya Statüsü": statu_metni,
-                "Müvekkile Rapor Notu": son_not
-            })
-
-        df_rapor = pd.DataFrame(rapor_satirlari)
-
-        st.write("")
-        st.markdown(f"#### 📝 {secilen_muvekkil} - Düzenlenebilir Durum Raporu")
-        st.caption("Tablodaki hücrelere doğrudan tıklayarak açıklamaları, statüleri veya tutarları müvekkile sunmadan önce dilediğiniz gibi düzenleyebilirsiniz. Yapılan düzenlemeler Excel çıktısına birebir yansır.")
-
-        editor_key = f"rapor_editor_{secilen_muvekkil}"
-        edited_report = st.data_editor(
-            df_rapor,
-            key=editor_key,
-            use_container_width=True,
-            num_rows="dynamic",
-            column_config={
-                "dosya_id": None,
-                "statu_kodu": None,
-                "Dosya No / Daire": st.column_config.TextColumn(width="medium"),
-                "Açılış Tarihi": st.column_config.TextColumn(width="small"),
-                "Borçlu(lar)": st.column_config.TextColumn(width="large"),
-                "Takip Türü": st.column_config.TextColumn(width="medium"),
-                "Başlangıç Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
-                "Tahsil Edilen": st.column_config.NumberColumn(format="%.2f TL"),
-                "Dosya Statüsü": st.column_config.TextColumn(width="medium"),
-                "Müvekkile Rapor Notu": st.column_config.TextColumn(width="large")
-            }
-        )
-
-        col_save_rep_btn, _ = st.columns([1, 1])
-        with col_save_rep_btn:
-            if st.button("💾 Düzenlenen Rapor Notlarını Dosya Geçmişine Kalıcı Kaydet", key=f"btn_save_report_notes_{secilen_muvekkil}"):
-                kaydedilen = 0
-                for _, r_item in edited_report.iterrows():
-                    d_id_val = r_item.get("dosya_id")
-                    cur_not_txt = str(r_item.get("Müvekkile Rapor Notu", "")).strip()
-                    if d_id_val and cur_not_txt:
-                        cursor.execute("SELECT not_icerik FROM dosya_notlari WHERE dosya_id = ? ORDER BY id DESC LIMIT 1", (int(d_id_val),))
-                        check_cur = cursor.fetchone()
-                        if not check_cur or check_cur[0] != cur_not_txt:
-                            cursor.execute("INSERT INTO dosya_notlari (dosya_id, tarih, not_icerik) VALUES (?, ?, ?)", (int(d_id_val), str(date.today()), cur_not_txt))
-                            kaydedilen += 1
-                conn.commit()
-                invalidate_caches()
-                st.success(f"✅ {kaydedilen} dosyanın rapor notu dosya geçmişine başarıyla kaydedildi!")
-                st.rerun()
-
-        top_baslangic = float(edited_report["Başlangıç Asıl Alacak"].sum()) if not edited_report.empty else 0.0
-        top_tahsilat = float(edited_report["Tahsil Edilen"].sum()) if not edited_report.empty else 0.0
-
-        st.write("")
-        tahsil_orani_yuzde = (top_tahsilat / top_baslangic * 100.0) if top_baslangic > 0 else 0.0
-        rk1, rk2, rk3, rk4 = st.columns(4)
-        rk1.metric("Toplam Dosya", f"{len(edited_report)} Adet")
-        rk2.metric("Portföy Asıl Alacak", format_tr_money(top_baslangic))
-        rk3.metric("Toplam Tahsil Edilen", format_tr_money(top_tahsilat))
-        rk4.metric("🎯 Portföy Tahsilat Başarı Oranı", f"%{tahsil_orani_yuzde:.2f}")
-
-        cnt_infaz = sum(1 for _, r in edited_report.iterrows() if "İnfaz" in str(r.get("Dosya Statüsü", "")) or "Kapalı" in str(r.get("Dosya Statüsü", "")))
-        cnt_itiraz = sum(1 for _, r in edited_report.iterrows() if "İtiraz" in str(r.get("Dosya Statüsü", "")))
-        cnt_kesin = sum(1 for _, r in edited_report.iterrows() if "Kesinleş" in str(r.get("Dosya Statüsü", "")))
-        cnt_acik = max(0, len(edited_report) - cnt_infaz - cnt_itiraz - cnt_kesin)
-
-        st.markdown(f"""
-        <div style="display: flex; gap: 8px; margin-top: 10px; margin-bottom: 12px; flex-wrap: wrap;">
-            <div style="flex: 1; min-width: 140px; background: rgba(16, 185, 129, 0.12); border: 1.5px solid #10B981; border-radius: 8px; padding: 6px 10px; text-align: center;">
-                <span style="font-size: 11px; font-weight: 700; color: #10B981; text-transform: uppercase;">🔒 İnfazen Kapatıldı</span>
-                <div style="font-size: 17px; font-weight: 800; color: #10B981;">{cnt_infaz} Dosya</div>
-            </div>
-            <div style="flex: 1; min-width: 140px; background: rgba(239, 68, 68, 0.12); border: 1.5px solid #EF4444; border-radius: 8px; padding: 6px 10px; text-align: center;">
-                <span style="font-size: 11px; font-weight: 700; color: #EF4444; text-transform: uppercase;">🚨 İtiraz Edildi</span>
-                <div style="font-size: 17px; font-weight: 800; color: #EF4444;">{cnt_itiraz} Dosya</div>
-            </div>
-            <div style="flex: 1; min-width: 140px; background: rgba(14, 165, 233, 0.12); border: 1.5px solid #0EA5E9; border-radius: 8px; padding: 6px 10px; text-align: center;">
-                <span style="font-size: 11px; font-weight: 700; color: #0EA5E9; text-transform: uppercase;">✅ Kesinleşti</span>
-                <div style="font-size: 17px; font-weight: 800; color: #0EA5E9;">{cnt_kesin} Dosya</div>
-            </div>
-            <div style="flex: 1; min-width: 140px; background: rgba(148, 163, 184, 0.12); border: 1.5px solid #94A3B8; border-radius: 8px; padding: 6px 10px; text-align: center;">
-                <span style="font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase;">📂 Açık / Derdest</span>
-                <div style="font-size: 17px; font-weight: 800; color: #64748B;">{cnt_acik} Dosya</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Excel Export of the Edited Data with Corporate Status Color Coding
-        wb_c = openpyxl.Workbook()
-        ws_c = wb_c.active
-        ws_c.title = "Müvekkil Durum Özeti"
-        ws_c.views.sheetView[0].showGridLines = True
-
-        fill_header = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
-        fill_sub = PatternFill(start_color="1F2421", end_color="1F2421", fill_type="solid")
-        fill_legend = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
-        fill_total = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
-
-        # Color Fills for Rows and Status Badges
-        fill_row_infaz = PatternFill(start_color="F0FDF4", end_color="F0FDF4", fill_type="solid")
-        fill_cell_infaz = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
-        font_status_infaz = Font(name="Arial", size=10, bold=True, color="166534")
-
-        fill_row_itiraz = PatternFill(start_color="FEF2F2", end_color="FEF2F2", fill_type="solid")
-        fill_cell_itiraz = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
-        font_status_itiraz = Font(name="Arial", size=10, bold=True, color="991B1B")
-
-        fill_row_kesin = PatternFill(start_color="F0F9FF", end_color="F0F9FF", fill_type="solid")
-        fill_cell_kesin = PatternFill(start_color="E0F2FE", end_color="E0F2FE", fill_type="solid")
-        font_status_kesin = Font(name="Arial", size=10, bold=True, color="075985")
-
-        fill_row_acik = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-        fill_row_acik_alt = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
-        fill_cell_acik = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
-        font_status_acik = Font(name="Arial", size=10, bold=True, color="334155")
-
-        font_title = Font(name="Arial", size=13, bold=True, color="FFFFFF")
-        font_sub = Font(name="Arial", size=10, bold=True, color="FFFFFF")
-        font_legend = Font(name="Arial", size=9, bold=True, color="475569")
-        font_reg = Font(name="Arial", size=10, color="000000")
-        font_total = Font(name="Arial", size=11, bold=True, color="FFFFFF")
-
-        thin_border = Border(
-            left=Side(style='thin', color='D1D5DB'), right=Side(style='thin', color='D1D5DB'),
-            top=Side(style='thin', color='D1D5DB'), bottom=Side(style='thin', color='D1D5DB')
-        )
-
-        ws_c.merge_cells("A1:H1")
-        ws_c["A1"] = f"JUS LEGAL | {secilen_muvekkil.upper()} İCRA PORTFÖYÜ DURUM RAPORU"
-        ws_c["A1"].font = font_title
-        ws_c["A1"].fill = fill_header
-        ws_c["A1"].alignment = Alignment(horizontal="center", vertical="center")
-        ws_c.row_dimensions[1].height = 36
-
-        ws_c.merge_cells("A2:H2")
-        ws_c["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Dosya: {len(edited_report)} | Portföy Asıl Alacak: {format_tr_money(top_baslangic)} | Toplam Tahsilat: {format_tr_money(top_tahsilat)} (%{tahsil_orani_yuzde:.1f})"
-        ws_c["A2"].font = Font(name="Arial", size=9, italic=True, color="334155")
-        ws_c["A2"].alignment = Alignment(horizontal="center", vertical="center")
-        ws_c.row_dimensions[2].height = 20
-
-        # Sleek Corporate Color Legend
-        ws_c.merge_cells("A3:H3")
-        ws_c["A3"] = f"RENK LEJANDI:  🔒 İnfazen Kapatıldı ({cnt_infaz}) [Yeşil]   |   🚨 İtiraz Edildi ({cnt_itiraz}) [Kırmızı]   |   ✅ Kesinleşti ({cnt_kesin}) [Mavi]   |   📂 Açık/Derdest ({cnt_acik}) [Beyaz]"
-        ws_c["A3"].font = font_legend
-        ws_c["A3"].fill = fill_legend
-        ws_c["A3"].alignment = Alignment(horizontal="center", vertical="center")
-        ws_c["A3"].border = thin_border
-        ws_c.row_dimensions[3].height = 22
-
-        headers_c = [
-            "Dosya No / İcra Dairesi", 
-            "Açılış Tarihi",
-            "Borçlu Firma / Kişi", 
-            "Takip Türü", 
-            "Başlangıç Asıl Alacak", 
-            "Tahsil Edilen", 
-            "Dosya Statüsü", 
-            "Müvekkile Rapor Notu / Son Durum"
-        ]
-
-        for c_i, h_txt in enumerate(headers_c, start=1):
-            c = ws_c.cell(row=4, column=c_i, value=h_txt)
-            c.fill = fill_sub
-            c.font = font_sub
-            c.alignment = Alignment(horizontal="center", vertical="center")
-            c.border = thin_border
-        ws_c.row_dimensions[4].height = 26
-
-        row_p = 5
-        for _, row_data in edited_report.iterrows():
-            statu_val = str(row_data.get("Dosya Statüsü", ""))
-            st_code = str(row_data.get("statu_kodu", ""))
-            if not st_code:
-                if "İnfaz" in statu_val or "Kapalı" in statu_val:
-                    st_code = "INFAZ"
-                elif "İtiraz" in statu_val:
-                    st_code = "ITIRAZ"
-                elif "Kesinleş" in statu_val:
-                    st_code = "KESIN"
+                if cache_key in calc_cache:
+                    rem_p, rem_i, tot_pay, *_ = calc_cache[cache_key]
                 else:
-                    st_code = "ACIK"
+                    rem_p, rem_i, tot_pay, m_list, *_ = hesapla_kademeli_dosya_hesabi(
+                        d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], t_df,
+                        faiz_turu=d_row.get('faiz_turu', 'Özel Oran'),
+                        masraflar_df=m_df,
+                        alacak_kalemleri_df=m_ak_df
+                    )
+                    calc_cache[cache_key] = (rem_p, rem_i, tot_pay, m_list)
 
-            if st_code == "INFAZ":
-                row_fill = fill_row_infaz
-                status_fill = fill_cell_infaz
-                status_font = font_status_infaz
-            elif st_code == "ITIRAZ":
-                row_fill = fill_row_itiraz
-                status_fill = fill_cell_itiraz
-                status_font = font_status_itiraz
-            elif st_code == "KESIN":
-                row_fill = fill_row_kesin
-                status_fill = fill_cell_kesin
-                status_font = font_status_kesin
-            else:
-                row_fill = fill_row_acik if row_p % 2 == 0 else fill_row_acik_alt
-                status_fill = fill_cell_acik
-                status_font = font_status_acik
+                ana_para = float(d_row['ana_para'])
 
-            vals = [
-                str(row_data["Dosya No / Daire"]),
-                str(row_data.get("Açılış Tarihi", "-")),
-                str(row_data["Borçlu(lar)"]),
-                str(row_data["Takip Türü"]),
-                float(row_data["Başlangıç Asıl Alacak"]),
-                float(row_data["Tahsil Edilen"]),
-                str(row_data["Dosya Statüsü"]),
-                str(row_data["Müvekkile Rapor Notu"])
+                not_metinleri = [nr['not_icerik'] for _, nr in n_df.iterrows()]
+                son_not = not_metinleri[0] if not_metinleri else "İşlem aşamasında."
+
+                is_infaz_d = bool(re.search(r"Kapatıldı|İnfaz|Kapalı", str(d_row.get('durum', '')), re.I))
+                is_itiraz_d = bool(d_row.get('itiraz_edildi') == 1)
+                is_kesin_d = bool(d_row.get('kesinlesme_durumu') == 1)
+
+                if is_infaz_d:
+                    statu_metni = "🔒 İnfazen Kapatıldı"
+                    statu_kodu = "INFAZ"
+                elif is_itiraz_d:
+                    statu_metni = "🚨 İtiraz Edildi (Takip Durdu)"
+                    statu_kodu = "ITIRAZ"
+                elif is_kesin_d:
+                    statu_metni = "✅ Kesinleşti (Haciz Safhasında)"
+                    statu_kodu = "KESIN"
+                else:
+                    statu_metni = "📂 Açık / Derdest (Tebliğ Aşamasında)"
+                    statu_kodu = "ACIK"
+
+                raw_tarih = str(d_row.get('takip_tarihi', '')).strip()
+                try:
+                    acilis_tarihi_fmt = datetime.strptime(raw_tarih[:10], "%Y-%m-%d").strftime("%d.%m.%Y")
+                except Exception:
+                    acilis_tarihi_fmt = raw_tarih if raw_tarih else "-"
+
+                rapor_satirlari.append({
+                    "dosya_id": d_id,
+                    "statu_kodu": statu_kodu,
+                    "Dosya No / Daire": f"{d_row['il']} {d_row['icra_dairesi']} {d_row['dosya_no']}",
+                    "Açılış Tarihi": acilis_tarihi_fmt,
+                    "Borçlu(lar)": str(d_row['borclu']),
+                    "Takip Türü": str(d_row.get('takip_turu', 'Örnek No: 7')),
+                    "Başlangıç Asıl Alacak": float(d_row['ana_para']),
+                    "Tahsil Edilen": float(tot_pay),
+                    "Dosya Statüsü": statu_metni,
+                    "Müvekkile Rapor Notu": son_not
+                })
+
+            df_rapor = pd.DataFrame(rapor_satirlari)
+
+            st.write("")
+            st.markdown(f"#### 📝 {secilen_muvekkil} - Düzenlenebilir Durum Raporu")
+            st.caption("Tablodaki hücrelere doğrudan tıklayarak açıklamaları, statüleri veya tutarları müvekkile sunmadan önce dilediğiniz gibi düzenleyebilirsiniz. Yapılan düzenlemeler Excel çıktısına birebir yansır.")
+
+            editor_key = f"rapor_editor_{secilen_muvekkil}"
+            edited_report = st.data_editor(
+                df_rapor,
+                key=editor_key,
+                use_container_width=True,
+                num_rows="dynamic",
+                column_config={
+                    "dosya_id": None,
+                    "statu_kodu": None,
+                    "Dosya No / Daire": st.column_config.TextColumn(width="medium"),
+                    "Açılış Tarihi": st.column_config.TextColumn(width="small"),
+                    "Borçlu(lar)": st.column_config.TextColumn(width="large"),
+                    "Takip Türü": st.column_config.TextColumn(width="medium"),
+                    "Başlangıç Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Tahsil Edilen": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Dosya Statüsü": st.column_config.TextColumn(width="medium"),
+                    "Müvekkile Rapor Notu": st.column_config.TextColumn(width="large")
+                }
+            )
+
+            col_save_rep_btn, _ = st.columns([1, 1])
+            with col_save_rep_btn:
+                if st.button("💾 Düzenlenen Rapor Notlarını Dosya Geçmişine Kalıcı Kaydet", key=f"btn_save_report_notes_{secilen_muvekkil}"):
+                    kaydedilen = 0
+                    for _, r_item in edited_report.iterrows():
+                        d_id_val = r_item.get("dosya_id")
+                        cur_not_txt = str(r_item.get("Müvekkile Rapor Notu", "")).strip()
+                        if d_id_val and cur_not_txt:
+                            cursor.execute("SELECT not_icerik FROM dosya_notlari WHERE dosya_id = ? ORDER BY id DESC LIMIT 1", (int(d_id_val),))
+                            check_cur = cursor.fetchone()
+                            if not check_cur or check_cur[0] != cur_not_txt:
+                                cursor.execute("INSERT INTO dosya_notlari (dosya_id, tarih, not_icerik) VALUES (?, ?, ?)", (int(d_id_val), str(date.today()), cur_not_txt))
+                                kaydedilen += 1
+                    conn.commit()
+                    invalidate_caches()
+                    st.success(f"✅ {kaydedilen} dosyanın rapor notu dosya geçmişine başarıyla kaydedildi!")
+                    st.rerun()
+
+            top_baslangic = float(edited_report["Başlangıç Asıl Alacak"].sum()) if not edited_report.empty else 0.0
+            top_tahsilat = float(edited_report["Tahsil Edilen"].sum()) if not edited_report.empty else 0.0
+
+            st.write("")
+            tahsil_orani_yuzde = (top_tahsilat / top_baslangic * 100.0) if top_baslangic > 0 else 0.0
+            rk1, rk2, rk3, rk4 = st.columns(4)
+            rk1.metric("Toplam Dosya", f"{len(edited_report)} Adet")
+            rk2.metric("Portföy Asıl Alacak", format_tr_money(top_baslangic))
+            rk3.metric("Toplam Tahsil Edilen", format_tr_money(top_tahsilat))
+            rk4.metric("🎯 Portföy Tahsilat Başarı Oranı", f"%{tahsil_orani_yuzde:.2f}")
+
+            cnt_infaz = sum(1 for _, r in edited_report.iterrows() if "İnfaz" in str(r.get("Dosya Statüsü", "")) or "Kapalı" in str(r.get("Dosya Statüsü", "")))
+            cnt_itiraz = sum(1 for _, r in edited_report.iterrows() if "İtiraz" in str(r.get("Dosya Statüsü", "")))
+            cnt_kesin = sum(1 for _, r in edited_report.iterrows() if "Kesinleş" in str(r.get("Dosya Statüsü", "")))
+            cnt_acik = max(0, len(edited_report) - cnt_infaz - cnt_itiraz - cnt_kesin)
+
+            st.markdown(f"""
+            <div style="display: flex; gap: 8px; margin-top: 10px; margin-bottom: 12px; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 140px; background: rgba(16, 185, 129, 0.12); border: 1.5px solid #10B981; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                    <span style="font-size: 11px; font-weight: 700; color: #10B981; text-transform: uppercase;">🔒 İnfazen Kapatıldı</span>
+                    <div style="font-size: 17px; font-weight: 800; color: #10B981;">{cnt_infaz} Dosya</div>
+                </div>
+                <div style="flex: 1; min-width: 140px; background: rgba(239, 68, 68, 0.12); border: 1.5px solid #EF4444; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                    <span style="font-size: 11px; font-weight: 700; color: #EF4444; text-transform: uppercase;">🚨 İtiraz Edildi</span>
+                    <div style="font-size: 17px; font-weight: 800; color: #EF4444;">{cnt_itiraz} Dosya</div>
+                </div>
+                <div style="flex: 1; min-width: 140px; background: rgba(14, 165, 233, 0.12); border: 1.5px solid #0EA5E9; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                    <span style="font-size: 11px; font-weight: 700; color: #0EA5E9; text-transform: uppercase;">✅ Kesinleşti</span>
+                    <div style="font-size: 17px; font-weight: 800; color: #0EA5E9;">{cnt_kesin} Dosya</div>
+                </div>
+                <div style="flex: 1; min-width: 140px; background: rgba(148, 163, 184, 0.12); border: 1.5px solid #94A3B8; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                    <span style="font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase;">📂 Açık / Derdest</span>
+                    <div style="font-size: 17px; font-weight: 800; color: #64748B;">{cnt_acik} Dosya</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Excel Export of the Edited Data with Corporate Status Color Coding
+            wb_c = openpyxl.Workbook()
+            ws_c = wb_c.active
+            ws_c.title = "Müvekkil Durum Özeti"
+            ws_c.views.sheetView[0].showGridLines = True
+
+            fill_header = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
+            fill_sub = PatternFill(start_color="1F2421", end_color="1F2421", fill_type="solid")
+            fill_legend = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+            fill_total = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
+
+            # Color Fills for Rows and Status Badges
+            fill_row_infaz = PatternFill(start_color="F0FDF4", end_color="F0FDF4", fill_type="solid")
+            fill_cell_infaz = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+            font_status_infaz = Font(name="Arial", size=10, bold=True, color="166534")
+
+            fill_row_itiraz = PatternFill(start_color="FEF2F2", end_color="FEF2F2", fill_type="solid")
+            fill_cell_itiraz = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+            font_status_itiraz = Font(name="Arial", size=10, bold=True, color="991B1B")
+
+            fill_row_kesin = PatternFill(start_color="F0F9FF", end_color="F0F9FF", fill_type="solid")
+            fill_cell_kesin = PatternFill(start_color="E0F2FE", end_color="E0F2FE", fill_type="solid")
+            font_status_kesin = Font(name="Arial", size=10, bold=True, color="075985")
+
+            fill_row_acik = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+            fill_row_acik_alt = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+            fill_cell_acik = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+            font_status_acik = Font(name="Arial", size=10, bold=True, color="334155")
+
+            font_title = Font(name="Arial", size=13, bold=True, color="FFFFFF")
+            font_sub = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+            font_legend = Font(name="Arial", size=9, bold=True, color="475569")
+            font_reg = Font(name="Arial", size=10, color="000000")
+            font_total = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+
+            thin_border = Border(
+                left=Side(style='thin', color='D1D5DB'), right=Side(style='thin', color='D1D5DB'),
+                top=Side(style='thin', color='D1D5DB'), bottom=Side(style='thin', color='D1D5DB')
+            )
+
+            ws_c.merge_cells("A1:H1")
+            ws_c["A1"] = f"JUS LEGAL | {secilen_muvekkil.upper()} İCRA PORTFÖYÜ DURUM RAPORU"
+            ws_c["A1"].font = font_title
+            ws_c["A1"].fill = fill_header
+            ws_c["A1"].alignment = Alignment(horizontal="center", vertical="center")
+            ws_c.row_dimensions[1].height = 36
+
+            ws_c.merge_cells("A2:H2")
+            ws_c["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Dosya: {len(edited_report)} | Portföy Asıl Alacak: {format_tr_money(top_baslangic)} | Toplam Tahsilat: {format_tr_money(top_tahsilat)} (%{tahsil_orani_yuzde:.1f})"
+            ws_c["A2"].font = Font(name="Arial", size=9, italic=True, color="334155")
+            ws_c["A2"].alignment = Alignment(horizontal="center", vertical="center")
+            ws_c.row_dimensions[2].height = 20
+
+            # Sleek Corporate Color Legend
+            ws_c.merge_cells("A3:H3")
+            ws_c["A3"] = f"RENK LEJANDI:  🔒 İnfazen Kapatıldı ({cnt_infaz}) [Yeşil]   |   🚨 İtiraz Edildi ({cnt_itiraz}) [Kırmızı]   |   ✅ Kesinleşti ({cnt_kesin}) [Mavi]   |   📂 Açık/Derdest ({cnt_acik}) [Beyaz]"
+            ws_c["A3"].font = font_legend
+            ws_c["A3"].fill = fill_legend
+            ws_c["A3"].alignment = Alignment(horizontal="center", vertical="center")
+            ws_c["A3"].border = thin_border
+            ws_c.row_dimensions[3].height = 22
+
+            headers_c = [
+                "Dosya No / İcra Dairesi", 
+                "Açılış Tarihi",
+                "Borçlu Firma / Kişi", 
+                "Takip Türü", 
+                "Başlangıç Asıl Alacak", 
+                "Tahsil Edilen", 
+                "Dosya Statüsü", 
+                "Müvekkile Rapor Notu / Son Durum"
             ]
-            for col_idx, val in enumerate(vals, start=1):
-                cell = ws_c.cell(row=row_p, column=col_idx, value=val)
-                cell.font = font_reg
-                cell.border = thin_border
-                cell.fill = row_fill
-                if col_idx == 7:
-                    cell.fill = status_fill
-                    cell.font = status_font
-                    cell.alignment = Alignment(horizontal="center", vertical="center")
-                elif isinstance(val, (float, int)) and col_idx in [5, 6]:
-                    cell.number_format = '#,##0.00 "TL"'
-                    cell.alignment = Alignment(horizontal="right", vertical="top")
+
+            for c_i, h_txt in enumerate(headers_c, start=1):
+                c = ws_c.cell(row=4, column=c_i, value=h_txt)
+                c.fill = fill_sub
+                c.font = font_sub
+                c.alignment = Alignment(horizontal="center", vertical="center")
+                c.border = thin_border
+            ws_c.row_dimensions[4].height = 26
+
+            row_p = 5
+            for _, row_data in edited_report.iterrows():
+                statu_val = str(row_data.get("Dosya Statüsü", ""))
+                st_code = str(row_data.get("statu_kodu", ""))
+                if not st_code:
+                    if "İnfaz" in statu_val or "Kapalı" in statu_val:
+                        st_code = "INFAZ"
+                    elif "İtiraz" in statu_val:
+                        st_code = "ITIRAZ"
+                    elif "Kesinleş" in statu_val:
+                        st_code = "KESIN"
+                    else:
+                        st_code = "ACIK"
+
+                if st_code == "INFAZ":
+                    row_fill = fill_row_infaz
+                    status_fill = fill_cell_infaz
+                    status_font = font_status_infaz
+                elif st_code == "ITIRAZ":
+                    row_fill = fill_row_itiraz
+                    status_fill = fill_cell_itiraz
+                    status_font = font_status_itiraz
+                elif st_code == "KESIN":
+                    row_fill = fill_row_kesin
+                    status_fill = fill_cell_kesin
+                    status_font = font_status_kesin
                 else:
-                    cell.alignment = Alignment(horizontal="center" if col_idx in [1, 2, 4] else "left", vertical="top", wrap_text=(col_idx == 8))
-            ws_c.row_dimensions[row_p].height = 36
-            row_p += 1
+                    row_fill = fill_row_acik if row_p % 2 == 0 else fill_row_acik_alt
+                    status_fill = fill_cell_acik
+                    status_font = font_status_acik
 
-        ws_c.cell(row=row_p, column=1, value="TOPLAM PORTFÖY ÖZETİ").font = font_total
-        ws_c.merge_cells(start_row=row_p, start_column=1, end_row=row_p, end_column=4)
+                vals = [
+                    str(row_data["Dosya No / Daire"]),
+                    str(row_data.get("Açılış Tarihi", "-")),
+                    str(row_data["Borçlu(lar)"]),
+                    str(row_data["Takip Türü"]),
+                    float(row_data["Başlangıç Asıl Alacak"]),
+                    float(row_data["Tahsil Edilen"]),
+                    str(row_data["Dosya Statüsü"]),
+                    str(row_data["Müvekkile Rapor Notu"])
+                ]
+                for col_idx, val in enumerate(vals, start=1):
+                    cell = ws_c.cell(row=row_p, column=col_idx, value=val)
+                    cell.font = font_reg
+                    cell.border = thin_border
+                    cell.fill = row_fill
+                    if col_idx == 7:
+                        cell.fill = status_fill
+                        cell.font = status_font
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                    elif isinstance(val, (float, int)) and col_idx in [5, 6]:
+                        cell.number_format = '#,##0.00 "TL"'
+                        cell.alignment = Alignment(horizontal="right", vertical="top")
+                    else:
+                        cell.alignment = Alignment(horizontal="center" if col_idx in [1, 2, 4] else "left", vertical="top", wrap_text=(col_idx == 8))
+                ws_c.row_dimensions[row_p].height = 36
+                row_p += 1
 
-        totals_map = {
-            5: top_baslangic,
-            6: top_tahsilat
-        }
+            ws_c.cell(row=row_p, column=1, value="TOPLAM PORTFÖY ÖZETİ").font = font_total
+            ws_c.merge_cells(start_row=row_p, start_column=1, end_row=row_p, end_column=4)
 
-        for col_idx in range(1, 9):
-            c_tot = ws_c.cell(row=row_p, column=col_idx)
-            c_tot.fill = fill_total
-            c_tot.font = font_total
-            c_tot.border = thin_border
-            if col_idx in totals_map:
-                c_tot.value = totals_map[col_idx]
-                c_tot.number_format = '#,##0.00 "TL"'
-                c_tot.alignment = Alignment(horizontal="right", vertical="center")
-        ws_c.row_dimensions[row_p].height = 28
+            totals_map = {
+                5: top_baslangic,
+                6: top_tahsilat
+            }
 
-        ws_c.column_dimensions["A"].width = 28
-        ws_c.column_dimensions["B"].width = 15
-        ws_c.column_dimensions["C"].width = 26
-        ws_c.column_dimensions["D"].width = 24
-        ws_c.column_dimensions["E"].width = 22
-        ws_c.column_dimensions["F"].width = 22
-        ws_c.column_dimensions["G"].width = 24
-        ws_c.column_dimensions["H"].width = 50
+            for col_idx in range(1, 9):
+                c_tot = ws_c.cell(row=row_p, column=col_idx)
+                c_tot.fill = fill_total
+                c_tot.font = font_total
+                c_tot.border = thin_border
+                if col_idx in totals_map:
+                    c_tot.value = totals_map[col_idx]
+                    c_tot.number_format = '#,##0.00 "TL"'
+                    c_tot.alignment = Alignment(horizontal="right", vertical="center")
+            ws_c.row_dimensions[row_p].height = 28
 
-        buf_c = io.BytesIO()
-        wb_c.save(buf_c)
-        buf_c.seek(0)
+            ws_c.column_dimensions["A"].width = 28
+            ws_c.column_dimensions["B"].width = 15
+            ws_c.column_dimensions["C"].width = 26
+            ws_c.column_dimensions["D"].width = 24
+            ws_c.column_dimensions["E"].width = 22
+            ws_c.column_dimensions["F"].width = 22
+            ws_c.column_dimensions["G"].width = 24
+            ws_c.column_dimensions["H"].width = 50
 
-        st.write("")
-        st.download_button(
-            label="📥 Düzenlenmiş Müvekkil Raporunu İndir (.xlsx)",
-            data=buf_c,
-            file_name=f"{secilen_muvekkil}_Muvakkil_Durum_Raporu.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-            use_container_width=True
-        )
+            buf_c = io.BytesIO()
+            wb_c.save(buf_c)
+            buf_c.seek(0)
+
+            st.write("")
+            st.download_button(
+                label="📥 Düzenlenmiş Müvekkil Raporunu İndir (.xlsx)",
+                data=buf_c,
+                file_name=f"{secilen_muvekkil}_Muvakkil_Durum_Raporu.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True
+            )
+
+        with tab_kasa:
+            st.write("")
+            st.markdown(f"#### 💰 {secilen_muvekkil} - Kasa, Tahsilat & Virman Mutabakat Cetveli")
+            st.caption("Müvekkilin icra dosyalarından tahsil edilen paraları, tahsilat tarihlerini, masraf/vekalet kesintilerini ve müvekkil hesabına virman edilecek net hakedişleri dökümleyin.")
+
+            if m_all_t.empty:
+                st.info(f"ℹ️ **{secilen_muvekkil}** cari kartına bağlı icra dosyalarında henüz kayıtlı bir tahsilat işlemi bulunmuyor.")
+            else:
+                dosya_lookup = {
+                    int(r['id']): {
+                        "dosya_no": f"{r['il']} {r['icra_dairesi']} {r['dosya_no']}",
+                        "borclu": str(r['borclu']),
+                        "durum": str(r.get('durum', 'Açık'))
+                    }
+                    for _, r in m_dosyalar.iterrows()
+                }
+
+                # Filtreleme Alanı
+                fk1, fk2, fk3 = st.columns([1.5, 1.5, 2])
+                with fk1:
+                    tarih_bas = st.date_input("Tahsilat Başlangıç Tarihi", value=None, key=f"f2_bas_{secilen_muvekkil}")
+                with fk2:
+                    tarih_bit = st.date_input("Tahsilat Bitiş Tarihi", value=None, key=f"f2_bit_{secilen_muvekkil}")
+                with fk3:
+                    dosya_sec_list = ["Tüm Dosyalar"] + [f"{d['dosya_no']} | {d['borclu'][:22]}" for d in dosya_lookup.values()]
+                    sec_dosya_f = st.selectbox("Dosya Filtresi", dosya_sec_list, key=f"f2_dflt_{secilen_muvekkil}")
+
+                kasa_satirlari = []
+                sira_no = 1
+                sorted_tahsilatlar = m_all_t.sort_values(by=["tarih", "id"], ascending=[False, False])
+
+                for _, t_item in sorted_tahsilatlar.iterrows():
+                    d_id_val = int(t_item['dosya_id'])
+                    d_meta = dosya_lookup.get(d_id_val, {"dosya_no": "Dosya", "borclu": "Borçlu", "durum": "Açık"})
+
+                    t_str = str(t_item['tarih'])[:10]
+                    try:
+                        t_dt = datetime.strptime(t_str, "%Y-%m-%d").date()
+                        t_fmt = t_dt.strftime("%d.%m.%Y")
+                    except Exception:
+                        t_dt = None
+                        t_fmt = t_str
+
+                    if tarih_bas and t_dt and t_dt < tarih_bas:
+                        continue
+                    if tarih_bit and t_dt and t_dt > tarih_bit:
+                        continue
+
+                    if sec_dosya_f != "Tüm Dosyalar" and d_meta['dosya_no'] not in sec_dosya_f:
+                        continue
+
+                    t_amt = float(t_item.get('tutar', 0.0))
+                    t_desc = str(t_item.get('aciklama', '') or '')
+                    
+                    kasa_satirlari.append({
+                        "tahsilat_id": int(t_item['id']),
+                        "dosya_id": d_id_val,
+                        "Sıra": sira_no,
+                        "Tahsilat Tarihi": t_fmt,
+                        "Dosya No / İcra Dairesi": d_meta['dosya_no'],
+                        "Borçlu Firma / Kişi": d_meta['borclu'],
+                        "Brüt Tahsilat": t_amt,
+                        "Masraf/Harç Mahsubu": 0.0,
+                        "Vekalet Ücreti Payı": 0.0,
+                        "Müvekkile Net Virman": t_amt,
+                        "Virman Durumu": "✅ Müvekkile Gönderildi",
+                        "Açıklama / Dekont & Not": t_desc
+                    })
+                    sira_no += 1
+
+                df_kasa = pd.DataFrame(kasa_satirlari)
+
+                if df_kasa.empty:
+                    st.warning("Seçilen tarih veya dosya filtrelerine uygun tahsilat kaydı bulunamadı.")
+                else:
+                    kasa_editor_key = f"kasa_editor_{secilen_muvekkil}"
+                    edited_kasa = st.data_editor(
+                        df_kasa,
+                        key=kasa_editor_key,
+                        use_container_width=True,
+                        num_rows="dynamic",
+                        column_config={
+                            "tahsilat_id": None,
+                            "dosya_id": None,
+                            "Sıra": st.column_config.NumberColumn(width="small"),
+                            "Tahsilat Tarihi": st.column_config.TextColumn(width="small"),
+                            "Dosya No / İcra Dairesi": st.column_config.TextColumn(width="medium"),
+                            "Borçlu Firma / Kişi": st.column_config.TextColumn(width="medium"),
+                            "Brüt Tahsilat": st.column_config.NumberColumn(format="%.2f TL"),
+                            "Masraf/Harç Mahsubu": st.column_config.NumberColumn(format="%.2f TL"),
+                            "Vekalet Ücreti Payı": st.column_config.NumberColumn(format="%.2f TL"),
+                            "Müvekkile Net Virman": st.column_config.NumberColumn(format="%.2f TL"),
+                            "Virman Durumu": st.column_config.SelectboxColumn(
+                                width="medium",
+                                options=[
+                                    "✅ Müvekkile Gönderildi",
+                                    "⏳ Gönderim Bekliyor",
+                                    "💼 Masraf/Vekalet Mahsubu",
+                                    "🏦 İcra Dairesi Kasasında"
+                                ]
+                            ),
+                            "Açıklama / Dekont & Not": st.column_config.TextColumn(width="large")
+                        }
+                    )
+
+                    top_k_adet = len(edited_kasa)
+                    top_k_brut = float(edited_kasa["Brüt Tahsilat"].sum()) if not edited_kasa.empty else 0.0
+                    top_k_masraf = float(edited_kasa["Masraf/Harç Mahsubu"].sum()) if not edited_kasa.empty else 0.0
+                    top_k_vekalet = float(edited_kasa["Vekalet Ücreti Payı"].sum()) if not edited_kasa.empty else 0.0
+                    top_k_net = float(edited_kasa["Müvekkile Net Virman"].sum()) if not edited_kasa.empty else (top_k_brut - top_k_masraf - top_k_vekalet)
+
+                    st.write("")
+                    kk1, kk2, kk3, kk4, kk5 = st.columns(5)
+                    kk1.metric("Toplam Tahsilat", f"{top_k_adet} Adet")
+                    kk2.metric("Brüt Tahsilat", format_tr_money(top_k_brut))
+                    kk3.metric("Masraf/Harç Mahsubu", format_tr_money(top_k_masraf))
+                    kk4.metric("Vekalet Ücreti Payı", format_tr_money(top_k_vekalet))
+                    kk5.metric("🎯 Müvekkile Net Virman", format_tr_money(top_k_net))
+
+                    cnt_gonderildi = sum(1 for _, r in edited_kasa.iterrows() if "Gönderildi" in str(r.get("Virman Durumu", "")))
+                    cnt_bekliyor = sum(1 for _, r in edited_kasa.iterrows() if "Bekliyor" in str(r.get("Virman Durumu", "")))
+                    cnt_mahsubu = sum(1 for _, r in edited_kasa.iterrows() if "Mahsubu" in str(r.get("Virman Durumu", "")))
+                    cnt_icra = max(0, top_k_adet - cnt_gonderildi - cnt_bekliyor - cnt_mahsubu)
+
+                    st.markdown(f"""
+                    <div style="display: flex; gap: 8px; margin-top: 10px; margin-bottom: 12px; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 140px; background: rgba(16, 185, 129, 0.12); border: 1.5px solid #10B981; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                            <span style="font-size: 11px; font-weight: 700; color: #10B981; text-transform: uppercase;">✅ Müvekkile Gönderildi</span>
+                            <div style="font-size: 17px; font-weight: 800; color: #10B981;">{cnt_gonderildi} Adet</div>
+                        </div>
+                        <div style="flex: 1; min-width: 140px; background: rgba(245, 158, 11, 0.12); border: 1.5px solid #F59E0B; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                            <span style="font-size: 11px; font-weight: 700; color: #F59E0B; text-transform: uppercase;">⏳ Gönderim Bekliyor</span>
+                            <div style="font-size: 17px; font-weight: 800; color: #F59E0B;">{cnt_bekliyor} Adet</div>
+                        </div>
+                        <div style="flex: 1; min-width: 140px; background: rgba(14, 165, 233, 0.12); border: 1.5px solid #0EA5E9; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                            <span style="font-size: 11px; font-weight: 700; color: #0EA5E9; text-transform: uppercase;">💼 Masraf/Vekalet Mahsubu</span>
+                            <div style="font-size: 17px; font-weight: 800; color: #0EA5E9;">{cnt_mahsubu} Adet</div>
+                        </div>
+                        <div style="flex: 1; min-width: 140px; background: rgba(148, 163, 184, 0.12); border: 1.5px solid #94A3B8; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                            <span style="font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase;">🏦 İcra Dairesi Kasasında</span>
+                            <div style="font-size: 17px; font-weight: 800; color: #64748B;">{cnt_icra} Adet</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # Excel Export for Format 2
+                    wb_k = openpyxl.Workbook()
+                    ws_k = wb_k.active
+                    ws_k.title = "Tahsilat & Virman Cetveli"
+                    ws_k.views.sheetView[0].showGridLines = True
+
+                    fill_k_header = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
+                    fill_k_sub = PatternFill(start_color="1F2421", end_color="1F2421", fill_type="solid")
+                    fill_k_legend = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+                    fill_k_total = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
+
+                    fill_v_gonderildi = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+                    font_v_gonderildi = Font(name="Arial", size=10, bold=True, color="166534")
+
+                    fill_v_bekliyor = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
+                    font_v_bekliyor = Font(name="Arial", size=10, bold=True, color="92400E")
+
+                    fill_v_mahsup = PatternFill(start_color="E0F2FE", end_color="E0F2FE", fill_type="solid")
+                    font_v_mahsup = Font(name="Arial", size=10, bold=True, color="075985")
+
+                    fill_v_icra = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+                    font_v_icra = Font(name="Arial", size=10, bold=True, color="475569")
+
+                    ws_k.merge_cells("A1:J1")
+                    ws_k["A1"] = f"JUS LEGAL | {secilen_muvekkil.upper()} TAHSİLAT & VİRMAN MUTABAKAT CETVELİ"
+                    ws_k["A1"].font = font_title
+                    ws_k["A1"].fill = fill_k_header
+                    ws_k["A1"].alignment = Alignment(horizontal="center", vertical="center")
+                    ws_k.row_dimensions[1].height = 36
+
+                    ws_k.merge_cells("A2:J2")
+                    ws_k["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Tahsilat: {top_k_adet} Adet | Brüt Tahsilat: {format_tr_money(top_k_brut)} | Müvekkile Net Virman: {format_tr_money(top_k_net)}"
+                    ws_k["A2"].font = Font(name="Arial", size=9, italic=True, color="334155")
+                    ws_k["A2"].alignment = Alignment(horizontal="center", vertical="center")
+                    ws_k.row_dimensions[2].height = 20
+
+                    ws_k.merge_cells("A3:J3")
+                    ws_k["A3"] = f"DURUM LEJANDI:  ✅ Müvekkile Gönderildi ({cnt_gonderildi}) [Yeşil]   |   ⏳ Gönderim Bekliyor ({cnt_bekliyor}) [Sarı]   |   💼 Masraf/Vekalet Mahsubu ({cnt_mahsubu}) [Mavi]   |   🏦 İcra Dairesinde ({cnt_icra}) [Gri]"
+                    ws_k["A3"].font = font_legend
+                    ws_k["A3"].fill = fill_k_legend
+                    ws_k["A3"].alignment = Alignment(horizontal="center", vertical="center")
+                    ws_k["A3"].border = thin_border
+                    ws_k.row_dimensions[3].height = 22
+
+                    headers_k = [
+                        "Sıra",
+                        "Tahsilat Tarihi",
+                        "Dosya No / İcra Dairesi",
+                        "Borçlu Firma / Kişi",
+                        "Brüt Tahsilat",
+                        "Masraf/Harç Mahsubu",
+                        "Vekalet Ücreti Payı",
+                        "Müvekkile Net Virman",
+                        "Virman Durumu",
+                        "Açıklama / Dekont & Not"
+                    ]
+
+                    for c_i, h_txt in enumerate(headers_k, start=1):
+                        c = ws_k.cell(row=4, column=c_i, value=h_txt)
+                        c.fill = fill_k_sub
+                        c.font = font_sub
+                        c.alignment = Alignment(horizontal="center", vertical="center")
+                        c.border = thin_border
+                    ws_k.row_dimensions[4].height = 26
+
+                    row_k_idx = 5
+                    for _, r_kasa in edited_kasa.iterrows():
+                        v_statu = str(r_kasa.get("Virman Durumu", ""))
+                        if "Gönderildi" in v_statu:
+                            v_fill = fill_v_gonderildi
+                            v_font = font_v_gonderildi
+                        elif "Bekliyor" in v_statu:
+                            v_fill = fill_v_bekliyor
+                            v_font = font_v_bekliyor
+                        elif "Mahsubu" in v_statu:
+                            v_fill = fill_v_mahsup
+                            v_font = font_v_mahsup
+                        else:
+                            v_fill = fill_v_icra
+                            v_font = font_v_icra
+
+                        k_vals = [
+                            int(r_kasa["Sıra"]),
+                            str(r_kasa["Tahsilat Tarihi"]),
+                            str(r_kasa["Dosya No / İcra Dairesi"]),
+                            str(r_kasa["Borçlu Firma / Kişi"]),
+                            float(r_kasa["Brüt Tahsilat"]),
+                            float(r_kasa["Masraf/Harç Mahsubu"]),
+                            float(r_kasa["Vekalet Ücreti Payı"]),
+                            float(r_kasa["Müvekkile Net Virman"]),
+                            str(r_kasa["Virman Durumu"]),
+                            str(r_kasa.get("Açıklama / Dekont & Not", ""))
+                        ]
+
+                        for col_idx, val in enumerate(k_vals, start=1):
+                            cell = ws_k.cell(row=row_k_idx, column=col_idx, value=val)
+                            cell.font = font_reg
+                            cell.border = thin_border
+                            if row_k_idx % 2 == 1:
+                                cell.fill = fill_zebra
+
+                            if col_idx == 9:
+                                cell.fill = v_fill
+                                cell.font = v_font
+                                cell.alignment = Alignment(horizontal="center", vertical="center")
+                            elif isinstance(val, (float, int)) and col_idx in [5, 6, 7, 8]:
+                                cell.number_format = '#,##0.00 "TL"'
+                                cell.alignment = Alignment(horizontal="right", vertical="top")
+                                if col_idx == 8:
+                                    cell.font = Font(name="Arial", size=10, bold=True, color="084840")
+                            else:
+                                cell.alignment = Alignment(horizontal="center" if col_idx in [1, 2] else "left", vertical="top", wrap_text=(col_idx == 10))
+
+                        ws_k.row_dimensions[row_k_idx].height = 32
+                        row_k_idx += 1
+
+                    ws_k.cell(row=row_k_idx, column=1, value="GENEL TOPLAM MUTABAKAT").font = font_total
+                    ws_k.merge_cells(start_row=row_k_idx, start_column=1, end_row=row_k_idx, end_column=4)
+
+                    k_totals_map = {
+                        5: top_k_brut,
+                        6: top_k_masraf,
+                        7: top_k_vekalet,
+                        8: top_k_net
+                    }
+
+                    for col_idx in range(1, 11):
+                        c_tot = ws_k.cell(row=row_k_idx, column=col_idx)
+                        c_tot.fill = fill_k_total
+                        c_tot.font = font_total
+                        c_tot.border = thin_border
+                        if col_idx in k_totals_map:
+                            c_tot.value = k_totals_map[col_idx]
+                            c_tot.number_format = '#,##0.00 "TL"'
+                            c_tot.alignment = Alignment(horizontal="right", vertical="center")
+                    ws_k.row_dimensions[row_k_idx].height = 28
+
+                    ws_k.column_dimensions["A"].width = 8
+                    ws_k.column_dimensions["B"].width = 16
+                    ws_k.column_dimensions["C"].width = 28
+                    ws_k.column_dimensions["D"].width = 28
+                    ws_k.column_dimensions["E"].width = 20
+                    ws_k.column_dimensions["F"].width = 20
+                    ws_k.column_dimensions["G"].width = 20
+                    ws_k.column_dimensions["H"].width = 22
+                    ws_k.column_dimensions["I"].width = 24
+                    ws_k.column_dimensions["J"].width = 45
+
+                    buf_k = io.BytesIO()
+                    wb_k.save(buf_k)
+                    buf_k.seek(0)
+
+                    st.write("")
+                    st.download_button(
+                        label="📥 Müvekkil Tahsilat & Virman Cetvelini İndir (.xlsx)",
+                        data=buf_k,
+                        file_name=f"{secilen_muvekkil}_Tahsilat_Virman_Cetveli.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                        use_container_width=True,
+                        key=f"btn_dl_virman_{secilen_muvekkil}"
+                    )
+
+
 
 # -------------------------------------------------------------
 # 10. MODÜL 3: YENİ DOSYA AÇILIŞI
