@@ -103,7 +103,7 @@ class PostgresCursorWrapper:
                 except Exception:
                     pass
 
-            return res
+            return self
 
     def executemany(self, sql, seq_of_params):
         with _lock:

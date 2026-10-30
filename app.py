@@ -2410,10 +2410,17 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 statu_metni = "📂 Açık / Derdest (Tebliğ Aşamasında)"
                 statu_kodu = "ACIK"
 
+            raw_tarih = str(d_row.get('takip_tarihi', '')).strip()
+            try:
+                acilis_tarihi_fmt = datetime.strptime(raw_tarih[:10], "%Y-%m-%d").strftime("%d.%m.%Y")
+            except Exception:
+                acilis_tarihi_fmt = raw_tarih if raw_tarih else "-"
+
             rapor_satirlari.append({
                 "dosya_id": d_id,
                 "statu_kodu": statu_kodu,
                 "Dosya No / Daire": f"{d_row['il']} {d_row['icra_dairesi']} {d_row['dosya_no']}",
+                "Açılış Tarihi": acilis_tarihi_fmt,
                 "Borçlu(lar)": str(d_row['borclu']),
                 "Takip Türü": str(d_row.get('takip_turu', 'Örnek No: 7')),
                 "Başlangıç Asıl Alacak": float(d_row['ana_para']),
@@ -2437,6 +2444,10 @@ elif menu == "Müvekkil Portföy & Raporlama":
             column_config={
                 "dosya_id": None,
                 "statu_kodu": None,
+                "Dosya No / Daire": st.column_config.TextColumn(width="medium"),
+                "Açılış Tarihi": st.column_config.TextColumn(width="small"),
+                "Borçlu(lar)": st.column_config.TextColumn(width="large"),
+                "Takip Türü": st.column_config.TextColumn(width="medium"),
                 "Başlangıç Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
                 "Tahsil Edilen": st.column_config.NumberColumn(format="%.2f TL"),
                 "Dosya Statüsü": st.column_config.TextColumn(width="medium"),
@@ -2452,11 +2463,13 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     d_id_val = r_item.get("dosya_id")
                     cur_not_txt = str(r_item.get("Müvekkile Rapor Notu", "")).strip()
                     if d_id_val and cur_not_txt:
-                        check_cur = cursor.execute("SELECT not_icerik FROM dosya_notlari WHERE dosya_id = ? ORDER BY id DESC LIMIT 1", (int(d_id_val),)).fetchone()
+                        cursor.execute("SELECT not_icerik FROM dosya_notlari WHERE dosya_id = ? ORDER BY id DESC LIMIT 1", (int(d_id_val),))
+                        check_cur = cursor.fetchone()
                         if not check_cur or check_cur[0] != cur_not_txt:
                             cursor.execute("INSERT INTO dosya_notlari (dosya_id, tarih, not_icerik) VALUES (?, ?, ?)", (int(d_id_val), str(date.today()), cur_not_txt))
                             kaydedilen += 1
                 conn.commit()
+                invalidate_caches()
                 st.success(f"✅ {kaydedilen} dosyanın rapor notu dosya geçmişine başarıyla kaydedildi!")
                 st.rerun()
 
@@ -2537,21 +2550,21 @@ elif menu == "Müvekkil Portföy & Raporlama":
             top=Side(style='thin', color='D1D5DB'), bottom=Side(style='thin', color='D1D5DB')
         )
 
-        ws_c.merge_cells("A1:G1")
+        ws_c.merge_cells("A1:H1")
         ws_c["A1"] = f"JUS LEGAL | {secilen_muvekkil.upper()} İCRA PORTFÖYÜ DURUM RAPORU"
         ws_c["A1"].font = font_title
         ws_c["A1"].fill = fill_header
         ws_c["A1"].alignment = Alignment(horizontal="center", vertical="center")
         ws_c.row_dimensions[1].height = 36
 
-        ws_c.merge_cells("A2:G2")
+        ws_c.merge_cells("A2:H2")
         ws_c["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Dosya: {len(edited_report)} | Portföy Asıl Alacak: {format_tr_money(top_baslangic)} | Toplam Tahsilat: {format_tr_money(top_tahsilat)} (%{tahsil_orani_yuzde:.1f})"
         ws_c["A2"].font = Font(name="Arial", size=9, italic=True, color="334155")
         ws_c["A2"].alignment = Alignment(horizontal="center", vertical="center")
         ws_c.row_dimensions[2].height = 20
 
         # Sleek Corporate Color Legend
-        ws_c.merge_cells("A3:G3")
+        ws_c.merge_cells("A3:H3")
         ws_c["A3"] = f"RENK LEJANDI:  🔒 İnfazen Kapatıldı ({cnt_infaz}) [Yeşil]   |   🚨 İtiraz Edildi ({cnt_itiraz}) [Kırmızı]   |   ✅ Kesinleşti ({cnt_kesin}) [Mavi]   |   📂 Açık/Derdest ({cnt_acik}) [Beyaz]"
         ws_c["A3"].font = font_legend
         ws_c["A3"].fill = fill_legend
@@ -2561,6 +2574,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
 
         headers_c = [
             "Dosya No / İcra Dairesi", 
+            "Açılış Tarihi",
             "Borçlu Firma / Kişi", 
             "Takip Türü", 
             "Başlangıç Asıl Alacak", 
@@ -2610,6 +2624,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
 
             vals = [
                 str(row_data["Dosya No / Daire"]),
+                str(row_data.get("Açılış Tarihi", "-")),
                 str(row_data["Borçlu(lar)"]),
                 str(row_data["Takip Türü"]),
                 float(row_data["Başlangıç Asıl Alacak"]),
@@ -2622,27 +2637,27 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 cell.font = font_reg
                 cell.border = thin_border
                 cell.fill = row_fill
-                if col_idx == 6:
+                if col_idx == 7:
                     cell.fill = status_fill
                     cell.font = status_font
                     cell.alignment = Alignment(horizontal="center", vertical="center")
-                elif isinstance(val, (float, int)) and col_idx in [4, 5]:
+                elif isinstance(val, (float, int)) and col_idx in [5, 6]:
                     cell.number_format = '#,##0.00 "TL"'
                     cell.alignment = Alignment(horizontal="right", vertical="top")
                 else:
-                    cell.alignment = Alignment(horizontal="center" if col_idx in [1, 3] else "left", vertical="top", wrap_text=(col_idx == 7))
+                    cell.alignment = Alignment(horizontal="center" if col_idx in [1, 2, 4] else "left", vertical="top", wrap_text=(col_idx == 8))
             ws_c.row_dimensions[row_p].height = 36
             row_p += 1
 
         ws_c.cell(row=row_p, column=1, value="TOPLAM PORTFÖY ÖZETİ").font = font_total
-        ws_c.merge_cells(start_row=row_p, start_column=1, end_row=row_p, end_column=3)
+        ws_c.merge_cells(start_row=row_p, start_column=1, end_row=row_p, end_column=4)
 
         totals_map = {
-            4: top_baslangic,
-            5: top_tahsilat
+            5: top_baslangic,
+            6: top_tahsilat
         }
 
-        for col_idx in range(1, 8):
+        for col_idx in range(1, 9):
             c_tot = ws_c.cell(row=row_p, column=col_idx)
             c_tot.fill = fill_total
             c_tot.font = font_total
@@ -2654,12 +2669,13 @@ elif menu == "Müvekkil Portföy & Raporlama":
         ws_c.row_dimensions[row_p].height = 28
 
         ws_c.column_dimensions["A"].width = 28
-        ws_c.column_dimensions["B"].width = 26
-        ws_c.column_dimensions["C"].width = 24
-        ws_c.column_dimensions["D"].width = 22
+        ws_c.column_dimensions["B"].width = 15
+        ws_c.column_dimensions["C"].width = 26
+        ws_c.column_dimensions["D"].width = 24
         ws_c.column_dimensions["E"].width = 22
-        ws_c.column_dimensions["F"].width = 20
-        ws_c.column_dimensions["G"].width = 50
+        ws_c.column_dimensions["F"].width = 22
+        ws_c.column_dimensions["G"].width = 24
+        ws_c.column_dimensions["H"].width = 50
 
         buf_c = io.BytesIO()
         wb_c.save(buf_c)
