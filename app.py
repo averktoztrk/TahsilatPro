@@ -2298,37 +2298,107 @@ if menu == "Dosya Arama & Çalışma Masası":
                         st.session_state[f"ch_haric_{secili_id}"] = ch_live_tog
                         st.rerun()
 
+                    # Mahsuplar Yapılmamış (Tüm Brüt Kalemler) Görünüm Butonu
+                    mahsupsuz_tog = st.toggle(
+                        "📋 Mahsupsuz Görünüm (Tüm Brüt Kalemler)",
+                        value=st.session_state.get(f"mahsupsuz_{secili_id}", False),
+                        key=f"col_sag_mahsupsuz_{secili_id}",
+                        help="Tahsilat mahsupları düşülmeden; başlangıç asıl alacak, takip öncesi faiz, vekalet ücreti, net masraflar, harçlar ve takip tarihinden bugüne kadar işlemiş tüm brüt faiz kalemlerini listeler."
+                    )
+
                     gosterim_orani = secili_dosya['faiz_orani']
                     if not ak_df.empty and not ak_df[ak_df['faiz_turu'] != 'Faizsiz'].empty:
                         gosterim_orani = float(ak_df[ak_df['faiz_turu'] != 'Faizsiz']['faiz_orani'].iloc[0])
 
-                    if is_infaz:
-                        badge_durum = f"🔒 {secili_dosya['durum']}"
-                        borc_box_html = f"""<div class="financial-total-box" style="background: linear-gradient(135deg, #059669 0%, #10B981 100%);">
+                    temiz_asil_alacak = hesapla_temiz_asil_alacak(secili_dosya, ak_df)
+
+                    if mahsupsuz_tog:
+                        # Boş tahsilatlar tablosu ile hesabı çalıştırarak hiç mahsup yapılmamış tam işlemiş faiz ve brüt kalemleri al
+                        res_raw = hesapla_kademeli_dosya_hesabi(
+                            secili_dosya['ana_para'], secili_dosya['faiz_orani'], secili_dosya['takip_tarihi'], secili_dosya['t_oncesi_faiz'], pd.DataFrame(),
+                            faiz_turu=secili_dosya.get('faiz_turu', 'Özel Oran'),
+                            masraflar_df=masraf_df,
+                            alacak_kalemleri_df=ak_df
+                        )
+                        raw_p = res_raw[0]
+                        raw_tot_i = res_raw[1]
+                        raw_pre_i = res_raw[4]
+                        raw_post_i = res_raw[5]
+                        raw_vekalet = float(secili_dosya.get('vekalet_ucreti', 0.0))
+                        raw_cikis = float(secili_dosya.get('takip_cikisi', 0.0))
+                        raw_th = round(raw_cikis * (s_th_oran / 100.0), 2)
+                        raw_ch = 0.0 if (ch_is_haric or s_ch_oran == 0.0) else round(raw_cikis * (s_ch_oran / 100.0), 2)
+                        brut_toplam_alacak = round(raw_p + raw_tot_i + raw_vekalet + net_masraf + raw_th + raw_ch, 2)
+
+                        borc_box_html = f"""<div class="financial-total-box" style="background: linear-gradient(135deg, #0284C7 0%, #0369A1 100%);">
+<div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #FFFFFF; font-weight: 600;">TOPLAM DOSYA HESABI (MAHSUPSUZ / BRÜT)</div>
+<div style="font-size: 20px; font-weight: 700; color: #FFFFFF; margin-top: 2px;">{format_tr_money(brut_toplam_alacak)}</div>
+</div>"""
+                        cezaevi_row = f'<div class="financial-row" style="color: #94A3B8;"><span>Cezaevi Harcı (%{s_ch_oran:.2f}) [Hariç]:</span><strong>0,00 TL</strong></div>' if (ch_is_haric or s_ch_oran == 0.0) else f'<div class="financial-row"><span>Cezaevi Harcı (%{s_ch_oran:.2f}) [Brüt]:</span><strong>{format_tr_money(raw_ch)}</strong></div>'
+
+                        tahsilat_bilgi_row = f'<div class="financial-row" style="color: #10B981;"><span>Kayıtlı Tahsilat Toplamı (Mahsup Edilmedi):</span><strong style="color: #10B981;">{format_tr_money(tot_pay)}</strong></div>' if tot_pay > 0 else ''
+
+                        html_content = f"""<div class="financial-card" style="border: 2px solid #0284C7;">
+<div class="financial-card-header" style="background: rgba(2, 132, 199, 0.12);">
+<span style="font-weight: 700; font-size: 13.5px; color: #38BDF8;">📋 Canlı Dosya Hesabı (Mahsupsuz / Tüm Kalemler)</span>
+<span style="font-size: 11px; background-color: #0284C7; padding: 2px 8px; border-radius: 4px; color: #FFFFFF; font-weight: 700;">BRÜT KALEMLER</span>
+</div>
+<div class="financial-row"><span>Takip Açılış Tarihi:</span><strong style="color:#38BDF8;">📅 {secili_dosya['takip_tarihi']}</strong></div>
+<div class="financial-row"><span>Asıl Alacak:</span><strong>{format_tr_money(temiz_asil_alacak)}</strong></div>
+<div class="financial-row"><span>Takip Öncesi İşlemiş Faiz:</span><strong>{format_tr_money(raw_pre_i)}</strong></div>
+<div class="financial-row"><span>Takip Açılış Çıkışı:</span><strong>{format_tr_money(raw_cikis)}</strong></div>
+<div class="financial-row"><span>İcra Vekalet Ücreti (Brüt):</span><strong>{format_tr_money(raw_vekalet)}</strong></div>
+<div class="financial-row" style="background-color: {card_bg};"><span>Takip Sonrası İşlemiş Faiz (%{float(gosterim_orani):.2f}) [Brüt]:</span><strong style="color:#38BDF8;">{format_tr_money(raw_post_i)}</strong></div>
+<div class="financial-row"><span>Toplam İşlemiş Faiz (Öncesi+Sonrası):</span><strong style="color:#38BDF8;">{format_tr_money(raw_tot_i)}</strong></div>
+<div class="financial-row"><span>Başlangıç Ana Para:</span><strong>{format_tr_money(raw_p)}</strong></div>
+<div class="financial-row"><span>Toplam Yapılan Masraf:</span><strong>{format_tr_money(top_masraf)}</strong></div>
+<div class="financial-row"><span>Masraf İadeleri (-):</span><strong>{format_tr_money(top_iade)}</strong></div>
+<div class="financial-row"><span>Net Masraf Bakiyesi:</span><strong>{format_tr_money(net_masraf)}</strong></div>
+<div class="financial-row"><span>Tahsil Harcı (%{s_th_oran:.2f}) [Brüt]:</span><strong>{format_tr_money(raw_th)}</strong></div>
+{cezaevi_row}
+{tahsilat_bilgi_row}
+{borc_box_html}
+</div>"""
+                        st.markdown(html_content, unsafe_allow_html=True)
+
+                        if not ak_df.empty:
+                            with st.expander("📑 Takip Talebi Alacak Kalemleri Dağılımı (Brüt / Mahsupsuz)", expanded=True):
+                                ak_sub_df = pd.DataFrame({
+                                    "Kalem Adı": ak_df["kalem_adi"],
+                                    "Tutar": ak_df["tutar"].apply(format_tr_money),
+                                    "Takip Öncesi Faiz": ak_df["t_oncesi_faiz"].apply(format_tr_money),
+                                    "Faiz Oranı": ak_df["faiz_orani"].apply(lambda x: f"%{float(x):.2f}"),
+                                    "Faiz Türü": ak_df["faiz_turu"]
+                                })
+                                st.dataframe(ak_sub_df, use_container_width=True, hide_index=True)
+                    else:
+                        if is_infaz:
+                            badge_durum = f"🔒 {secili_dosya['durum']}"
+                            borc_box_html = f"""<div class="financial-total-box" style="background: linear-gradient(135deg, #059669 0%, #10B981 100%);">
 <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #FFFFFF; font-weight: 600;">DOSYA İNFAZ EDİLDİ / KAPANDI</div>
 <div style="font-size: 22px; font-weight: 700; color: #FFFFFF; margin-top: 2px;">0,00 TL</div>
 </div>"""
-                        kalan_vekalet_str = "0,00 TL (Tahsil Edildi)"
-                        kalan_th_str = "0,00 TL (Tahsil Edildi)"
-                        cezaevi_row = f'<div class="financial-row" style="color: #94A3B8;"><span>Cezaevi Harcı (%{s_ch_oran:.2f}):</span><strong>0,00 TL (Tahsil Edildi)</strong></div>'
-                    else:
-                        badge_durum = str(secili_dosya['durum'])
-                        toplam_etiket = "GÜNCEL TOPLAM BORÇ (CEZAEVİ HARİÇ)" if ch_is_haric else "GÜNCEL TOPLAM BORÇ (HARÇLAR DAHİL)"
-                        borc_box_html = f"""<div class="financial-total-box">
+                            kalan_vekalet_str = "0,00 TL (Tahsil Edildi)"
+                            kalan_th_str = "0,00 TL (Tahsil Edildi)"
+                            cezaevi_row = f'<div class="financial-row" style="color: #94A3B8;"><span>Cezaevi Harcı (%{s_ch_oran:.2f}):</span><strong>0,00 TL (Tahsil Edildi)</strong></div>'
+                        else:
+                            badge_durum = str(secili_dosya['durum'])
+                            toplam_etiket = "GÜNCEL TOPLAM BORÇ (CEZAEVİ HARİÇ)" if ch_is_haric else "GÜNCEL TOPLAM BORÇ (HARÇLAR DAHİL)"
+                            borc_box_html = f"""<div class="financial-total-box">
 <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #FFFFFF; font-weight: 600;">{toplam_etiket}</div>
 <div style="font-size: 20px; font-weight: 700; color: #FFFFFF; margin-top: 2px;">{format_tr_money(kalan_toplam_dosya_borcu)}</div>
 </div>"""
-                        kalan_vekalet_str = format_tr_money(kalan_vekalet)
-                        kalan_th_str = format_tr_money(kalan_th)
-                        cezaevi_row = f'<div class="financial-row" style="color: #94A3B8;"><span>Cezaevi Harcı (%{s_ch_oran:.2f}) [Hariç]:</span><strong>0,00 TL</strong></div>' if ch_is_haric else f'<div class="financial-row"><span>Kalan Cezaevi Harcı (%{s_ch_oran:.2f}):</span><strong>{format_tr_money(kalan_ch)}</strong></div>'
+                            kalan_vekalet_str = format_tr_money(kalan_vekalet)
+                            kalan_th_str = format_tr_money(kalan_th)
+                            cezaevi_row = f'<div class="financial-row" style="color: #94A3B8;"><span>Cezaevi Harcı (%{s_ch_oran:.2f}) [Hariç]:</span><strong>0,00 TL</strong></div>' if ch_is_haric else f'<div class="financial-row"><span>Kalan Cezaevi Harcı (%{s_ch_oran:.2f}):</span><strong>{format_tr_money(kalan_ch)}</strong></div>'
 
-                    html_content = f"""<div class="financial-card">
+                        html_content = f"""<div class="financial-card">
 <div class="financial-card-header">
 <span style="font-weight: 600; font-size: 13.5px; color: {accent_green};">📊 Canlı Dosya Hesabı</span>
 <span style="font-size: 11px; background-color: {card_border}; padding: 2px 6px; border-radius: 4px; color: {text_main}; font-weight: 600;">{badge_durum}</span>
 </div>
 <div class="financial-row"><span>Takip Açılış Tarihi:</span><strong style="color:{accent_green};">📅 {secili_dosya['takip_tarihi']}</strong></div>
-<div class="financial-row"><span>Asıl Alacak:</span><strong>{format_tr_money(secili_dosya['ana_para'])}</strong></div>
+<div class="financial-row"><span>Asıl Alacak:</span><strong>{format_tr_money(temiz_asil_alacak)}</strong></div>
 <div class="financial-row"><span>Kalan Takip Öncesi Faiz:</span><strong>{format_tr_money(rem_pre_i)}</strong></div>
 <div class="financial-row"><span>Takip Açılış Çıkışı:</span><strong>{format_tr_money(secili_dosya['takip_cikisi'])}</strong></div>
 <div class="financial-row"><span>Kalan Vekalet Ücreti:</span><strong>{kalan_vekalet_str}</strong></div>
@@ -2342,7 +2412,7 @@ if menu == "Dosya Arama & Çalışma Masası":
 <div class="financial-row" style="color: {accent_green};"><span>Toplam Tahsil Edilen (-):</span><strong style="color: {accent_green};">{format_tr_money(tot_pay)}</strong></div>
 {borc_box_html}
 </div>"""
-                    st.markdown(html_content, unsafe_allow_html=True)
+                        st.markdown(html_content, unsafe_allow_html=True)
     else:
         st.info("Kriterlere uygun icra dosyası bulunamadı.")
 
