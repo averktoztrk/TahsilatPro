@@ -2418,13 +2418,13 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 if cache_key in calc_cache:
                     rem_p, rem_i, tot_pay, *_ = calc_cache[cache_key]
                 else:
-                    rem_p, rem_i, tot_pay, m_list, *_ = hesapla_kademeli_dosya_hesabi(
+                    res_f1 = hesapla_kademeli_dosya_hesabi(
                         d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], t_df,
                         faiz_turu=d_row.get('faiz_turu', 'Özel Oran'),
                         masraflar_df=m_df,
                         alacak_kalemleri_df=m_ak_df
                     )
-                    calc_cache[cache_key] = (rem_p, rem_i, tot_pay, m_list)
+                    rem_p, rem_i, tot_pay, m_list = res_f1[0], res_f1[1], res_f1[2], res_f1[3]; calc_cache[cache_key] = res_f1
 
                 ana_para = float(d_row['ana_para'])
 
@@ -3111,10 +3111,10 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     target_hesap_tarihi
                 )
 
-                if cache_key in calc_cache:
+                if cache_key in calc_cache and len(calc_cache[cache_key]) >= 7:
                     c_res = calc_cache[cache_key]
                     rem_p, rem_tot_i, tot_pay = c_res[0], c_res[1], c_res[2]
-                    tot_acc_post_i = c_res[6] if len(c_res) > 6 else c_res[5]
+                    tot_acc_post_i = c_res[6]
                 else:
                     res = hesapla_kademeli_dosya_hesabi(
                         d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], t_df,
@@ -3125,7 +3125,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     )
                     calc_cache[cache_key] = res
                     rem_p, rem_tot_i, tot_pay = res[0], res[1], res[2]
-                    tot_acc_post_i = res[6] if len(res) > 6 else res[5]
+                    tot_acc_post_i = res[6] if len(res) > 6 else 0.0
 
                 baslangic_ana_para = float(d_row.get('ana_para', 0.0) or 0.0)
                 takip_oncesi_faiz = float(d_row.get('t_oncesi_faiz', 0.0) or 0.0)
