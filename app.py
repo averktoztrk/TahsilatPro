@@ -390,6 +390,20 @@ def make_safe_filename(text, suffix):
         cleaned = "Jus_Legal"
     return f"{cleaned}_{suffix}.xlsx"
 
+def hesapla_temiz_asil_alacak(d_row, ak_df=None):
+    tc_val = float(d_row.get('takip_cikisi', 0.0) or 0.0)
+    tof_val = float(d_row.get('t_oncesi_faiz', 0.0) or 0.0)
+    if tc_val <= 0:
+        tc_val = float(d_row.get('ana_para', 0.0) or 0.0) + tof_val
+    vek_sum = 0.0
+    if ak_df is not None and not ak_df.empty:
+        for _, itm in ak_df.iterrows():
+            k_adi = str(itm.get("kalem_adi", "")).lower()
+            k_tur = str(itm.get("kalem_turu", "")).lower()
+            if "vekalet" in k_adi or "vekalet" in k_tur:
+                vek_sum += float(itm.get("tutar", 0.0) or 0.0)
+    return max(0.0, round(tc_val - tof_val - vek_sum, 2))
+
 def hesapla_icra_vekalet_ucreti(takip_cikisi):
     if takip_cikisi <= 0:
         return 0.0
@@ -2426,7 +2440,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     )
                     rem_p, rem_i, tot_pay, m_list = res_f1[0], res_f1[1], res_f1[2], res_f1[3]; calc_cache[cache_key] = res_f1
 
-                ana_para = float(d_row['ana_para'])
+                ana_para = hesapla_temiz_asil_alacak(d_row, m_ak_df)
 
                 not_metinleri = [nr['not_icerik'] for _, nr in n_df.iterrows()]
                 son_not = not_metinleri[0] if not_metinleri else "İşlem aşamasında."
@@ -3127,7 +3141,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     rem_p, rem_tot_i, tot_pay = res[0], res[1], res[2]
                     tot_acc_post_i = res[6] if len(res) > 6 else 0.0
 
-                baslangic_ana_para = float(d_row.get('ana_para', 0.0) or 0.0)
+                baslangic_ana_para = hesapla_temiz_asil_alacak(d_row, m_ak_df)
                 takip_oncesi_faiz = float(d_row.get('t_oncesi_faiz', 0.0) or 0.0)
                 takip_sonrasi_faiz = float(tot_acc_post_i or 0.0)
                 toplam_alacak = round(baslangic_ana_para + takip_oncesi_faiz + takip_sonrasi_faiz, 2)
