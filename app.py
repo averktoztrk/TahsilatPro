@@ -656,6 +656,7 @@ def hesapla_kademeli_dosya_hesabi(ana_para, faiz_orani, takip_tarihi_str, t_once
         return sum(m["amount"] for m in masraf_records if m["date"] <= dt)
 
     masraf_paid_total = 0.0
+    total_accrued_post_interest = 0.0
 
     for ev in events:
         ev_date = ev["date"]
@@ -665,6 +666,7 @@ def hesapla_kademeli_dosya_hesabi(ana_para, faiz_orani, takip_tarihi_str, t_once
                 if itm["principal"] > 0:
                     acc = hesapla_aralik_faizi(itm["principal"], cur_date, ev_date, itm["faiz_turu"], itm["faiz_orani"])
                     itm["post_interest"] += acc
+                    total_accrued_post_interest += acc
             cur_date = ev_date
 
         pay_amount = ev["amount"]
@@ -743,13 +745,14 @@ def hesapla_kademeli_dosya_hesabi(ana_para, faiz_orani, takip_tarihi_str, t_once
             if itm["principal"] > 0:
                 acc = hesapla_aralik_faizi(itm["principal"], cur_date, hesap_tarihi, itm["faiz_turu"], itm["faiz_orani"])
                 itm["post_interest"] += acc
+                total_accrued_post_interest += acc
 
     final_principal = sum(itm["principal"] for itm in items)
     final_pre_interest = sum(itm["pre_interest"] for itm in items)
     final_post_interest = sum(itm["post_interest"] for itm in items)
     final_total_interest = final_pre_interest + final_post_interest
 
-    return round(final_principal, 2), round(final_total_interest, 2), round(toplam_tahsilat, 2), mahsup_gecmisi, round(final_pre_interest, 2), round(final_post_interest, 2)
+    return round(final_principal, 2), round(final_total_interest, 2), round(toplam_tahsilat, 2), mahsup_gecmisi, round(final_pre_interest, 2), round(final_post_interest, 2), round(total_accrued_post_interest, 2)
 
 # -------------------------------------------------------------
 # 5. TEK DOSYA İÇİN EXECUTIVE EXCEL OLUŞTURUCU
@@ -1679,7 +1682,7 @@ if menu == "Dosya Arama & Çalışma Masası":
                 top_iade = masraf_df['iade_tutari'].sum() if not masraf_df.empty else 0.0
                 net_masraf = top_masraf - top_iade
 
-                rem_p, rem_i, tot_pay, mahsup_list, rem_pre_i, rem_post_i = hesapla_kademeli_dosya_hesabi(
+                rem_p, rem_i, tot_pay, mahsup_list, rem_pre_i, rem_post_i, *extra = hesapla_kademeli_dosya_hesabi(
                     secili_dosya['ana_para'], secili_dosya['faiz_orani'], secili_dosya['takip_tarihi'], secili_dosya['t_oncesi_faiz'], tahsilat_df,
                     faiz_turu=secili_dosya.get('faiz_turu', 'Özel Oran'),
                     masraflar_df=masraf_df,
@@ -2370,7 +2373,8 @@ elif menu == "Müvekkil Portföy & Raporlama":
             "📋 Görüntülenecek ve İndirilecek Rapor Formatı Seçin:",
             [
                 "📊 Format 1: Dosya Bazlı Portföy Durum Raporu",
-                "💰 Format 2: Müvekkil Tahsilat & Virman (Kasa) Cetveli"
+                "💰 Format 2: Müvekkil Tahsilat & Virman (Kasa) Cetveli",
+                "📈 Format 3: Alacak & Faiz Detaylı Portföy Raporu"
             ],
             horizontal=True,
             key=f"rep_fmt_selector_{secilen_muvekkil}"
@@ -3048,6 +3052,376 @@ elif menu == "Müvekkil Portföy & Raporlama":
                         on_click="ignore",
                         key=f"btn_dl_virman_{secilen_muvekkil}"
                     )
+
+        elif secilen_format == "📈 Format 3: Alacak & Faiz Detaylı Portföy Raporu":
+            st.write("")
+            st.markdown(f"#### 📈 {secilen_muvekkil} - Alacak & Faiz Detaylı Portföy Raporu")
+            st.caption("Her bir icra dosyasının asıl alacak, takip öncesi faiz ve takip sonrası işleyen faiz kalemlerini detaylı olarak inceleyebilir, dosya notlarını düzenleyebilir ve kurumsal Excel raporu alabilirsiniz.")
+
+            calc_cache = st.session_state.setdefault("_calc_cache", {})
+            f3_satirlari = []
+
+            for _, d_row in m_dosyalar.iterrows():
+                d_id = int(d_row['id'])
+                t_df = m_t_grp.get(d_id, m_emp_t)
+                m_df = m_m_grp.get(d_id, m_emp_m)
+                n_df = m_n_grp.get(d_id, m_emp_n)
+                m_ak_df = m_ak_grp.get(d_id, m_emp_ak)
+
+                is_infaz_d = bool(re.search(r"Kapatıldı|İnfaz|Kapalı", str(d_row.get('durum', '')), re.I))
+                is_itiraz_d = bool(d_row.get('itiraz_edildi') == 1)
+                is_kesin_d = bool(d_row.get('kesinlesme_durumu') == 1)
+
+                if is_infaz_d:
+                    statu_metni = "🔒 İnfazen Kapatıldı"
+                    statu_kodu = "INFAZ"
+                elif is_itiraz_d:
+                    statu_metni = "🚨 İtiraz Edildi (Takip Durdu)"
+                    statu_kodu = "ITIRAZ"
+                elif is_kesin_d:
+                    statu_metni = "✅ Kesinleşti (Haciz Aşamasında)"
+                    statu_kodu = "KESIN"
+                else:
+                    statu_metni = "📂 Açık / Derdest (Tebliğ Aşamasında)"
+                    statu_kodu = "ACIK"
+
+                # İnfaz dosyalarda kapama (son tahsilat) tarihindeki faiz; açık dosyalarda güncel tarih faizi
+                target_hesap_tarihi = date.today()
+                if is_infaz_d and not t_df.empty:
+                    try:
+                        son_tahsilat_str = str(t_df['tarih'].max())[:10]
+                        target_hesap_tarihi = datetime.strptime(son_tahsilat_str, "%Y-%m-%d").date()
+                    except Exception:
+                        target_hesap_tarihi = date.today()
+
+                t_tutar_sum = float(t_df['tutar'].sum()) if not t_df.empty else 0.0
+                m_net_sum = float(m_df['masraf_tutari'].sum() - m_df['iade_tutari'].sum()) if not m_df.empty else 0.0
+
+                cache_key = (
+                    int(d_id),
+                    str(d_row.get('takip_tarihi', '')),
+                    float(d_row.get('ana_para', 0.0)),
+                    float(d_row.get('faiz_orani', 0.0)),
+                    str(d_row.get('faiz_turu', '')),
+                    float(d_row.get('t_oncesi_faiz', 0.0)),
+                    len(t_df),
+                    t_tutar_sum,
+                    len(m_df),
+                    m_net_sum,
+                    len(m_ak_df),
+                    target_hesap_tarihi
+                )
+
+                if cache_key in calc_cache:
+                    c_res = calc_cache[cache_key]
+                    rem_p, rem_tot_i, tot_pay = c_res[0], c_res[1], c_res[2]
+                    tot_acc_post_i = c_res[6] if len(c_res) > 6 else c_res[5]
+                else:
+                    res = hesapla_kademeli_dosya_hesabi(
+                        d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], t_df,
+                        hesap_tarihi=target_hesap_tarihi,
+                        faiz_turu=d_row.get('faiz_turu', 'Özel Oran'),
+                        masraflar_df=m_df,
+                        alacak_kalemleri_df=m_ak_df
+                    )
+                    calc_cache[cache_key] = res
+                    rem_p, rem_tot_i, tot_pay = res[0], res[1], res[2]
+                    tot_acc_post_i = res[6] if len(res) > 6 else res[5]
+
+                baslangic_ana_para = float(d_row.get('ana_para', 0.0) or 0.0)
+                takip_oncesi_faiz = float(d_row.get('t_oncesi_faiz', 0.0) or 0.0)
+                takip_sonrasi_faiz = float(tot_acc_post_i or 0.0)
+                toplam_faiz = round(takip_oncesi_faiz + takip_sonrasi_faiz, 2)
+                toplam_alacak = round(baslangic_ana_para + toplam_faiz, 2)
+                tahsil_edilen = float(tot_pay or 0.0)
+                kalan_borc = 0.0 if is_infaz_d else max(0.0, round(float(rem_p + rem_tot_i), 2))
+
+                raw_tarih = str(d_row.get('takip_tarihi', '')).strip()
+                try:
+                    acilis_tarihi_fmt = datetime.strptime(raw_tarih[:10], "%Y-%m-%d").strftime("%d.%m.%Y")
+                except Exception:
+                    acilis_tarihi_fmt = raw_tarih if raw_tarih else "-"
+
+                not_metinleri = [nr['not_icerik'] for _, nr in n_df.iterrows()]
+                son_not = not_metinleri[0] if not_metinleri else "İşlem aşamasında."
+
+                f3_satirlari.append({
+                    "dosya_id": d_id,
+                    "statu_kodu": statu_kodu,
+                    "Dosya No / Daire": f"{d_row['il']} {d_row['icra_dairesi']} {d_row['dosya_no']}",
+                    "Açılış Tarihi": acilis_tarihi_fmt,
+                    "Borçlu(lar)": str(d_row['borclu']),
+                    "Asıl Alacak": baslangic_ana_para,
+                    "Takip Öncesi Faiz": takip_oncesi_faiz,
+                    "Takip Sonrası Faiz": takip_sonrasi_faiz,
+                    "Toplam Faiz": toplam_faiz,
+                    "Toplam Alacak": toplam_alacak,
+                    "Tahsil Edilen": tahsil_edilen,
+                    "Kalan Bakiye": kalan_borc,
+                    "Dosya Statüsü": statu_metni,
+                    "Müvekkile Rapor Notu": son_not
+                })
+
+            df_f3 = pd.DataFrame(f3_satirlari)
+
+            top_f3_dosya = len(df_f3)
+            top_f3_asl = float(df_f3["Asıl Alacak"].sum()) if not df_f3.empty else 0.0
+            top_f3_on_f = float(df_f3["Takip Öncesi Faiz"].sum()) if not df_f3.empty else 0.0
+            top_f3_son_f = float(df_f3["Takip Sonrası Faiz"].sum()) if not df_f3.empty else 0.0
+            top_f3_top_f = float(df_f3["Toplam Faiz"].sum()) if not df_f3.empty else 0.0
+            top_f3_alacak = float(df_f3["Toplam Alacak"].sum()) if not df_f3.empty else 0.0
+            top_f3_tahsilat = float(df_f3["Tahsil Edilen"].sum()) if not df_f3.empty else 0.0
+            top_f3_kalan = float(df_f3["Kalan Bakiye"].sum()) if not df_f3.empty else 0.0
+
+            st.write("")
+            f3_m1, f3_m2, f3_m3, f3_m4, f3_m5, f3_m6 = st.columns(6)
+            f3_m1.metric("Toplam Dosya", f"{top_f3_dosya} Adet")
+            f3_m2.metric("Toplam Asıl Alacak", format_tr_money(top_f3_asl))
+            f3_m3.metric("Takip Öncesi Faiz", format_tr_money(top_f3_on_f))
+            f3_m4.metric("Takip Sonrası Faiz", format_tr_money(top_f3_son_f))
+            f3_m5.metric("Genel Alacak (Ana Para+Faiz)", format_tr_money(top_f3_alacak))
+            f3_m6.metric("🎯 Toplam Tahsilat", format_tr_money(top_f3_tahsilat))
+
+            cnt_f3_infaz = sum(1 for r in f3_satirlari if r["statu_kodu"] == "INFAZ")
+            cnt_f3_itiraz = sum(1 for r in f3_satirlari if r["statu_kodu"] == "ITIRAZ")
+            cnt_f3_kesin = sum(1 for r in f3_satirlari if r["statu_kodu"] == "KESIN")
+            cnt_f3_acik = sum(1 for r in f3_satirlari if r["statu_kodu"] == "ACIK")
+
+            st.markdown(f"""
+            <div style="display: flex; gap: 8px; margin-top: 10px; margin-bottom: 12px; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 140px; background: rgba(16, 185, 129, 0.12); border: 1.5px solid #10B981; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                    <span style="font-size: 11px; font-weight: 700; color: #10B981; text-transform: uppercase;">🔒 İnfazen Kapatıldı</span>
+                    <div style="font-size: 17px; font-weight: 800; color: #10B981;">{cnt_f3_infaz} Dosya</div>
+                </div>
+                <div style="flex: 1; min-width: 140px; background: rgba(239, 68, 68, 0.12); border: 1.5px solid #EF4444; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                    <span style="font-size: 11px; font-weight: 700; color: #EF4444; text-transform: uppercase;">🚨 İtiraz Edildi</span>
+                    <div style="font-size: 17px; font-weight: 800; color: #EF4444;">{cnt_f3_itiraz} Dosya</div>
+                </div>
+                <div style="flex: 1; min-width: 140px; background: rgba(14, 165, 233, 0.12); border: 1.5px solid #0EA5E9; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                    <span style="font-size: 11px; font-weight: 700; color: #0EA5E9; text-transform: uppercase;">✅ Kesinleşti</span>
+                    <div style="font-size: 17px; font-weight: 800; color: #0EA5E9;">{cnt_f3_kesin} Dosya</div>
+                </div>
+                <div style="flex: 1; min-width: 140px; background: rgba(148, 163, 184, 0.12); border: 1.5px solid #94A3B8; border-radius: 8px; padding: 6px 10px; text-align: center;">
+                    <span style="font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase;">📂 Açık / Derdest</span>
+                    <div style="font-size: 17px; font-weight: 800; color: #64748B;">{cnt_f3_acik} Dosya</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            f3_editor_key = f"faiz_report_editor_{secilen_muvekkil}"
+            edited_f3 = st.data_editor(
+                df_f3,
+                key=f3_editor_key,
+                use_container_width=True,
+                num_rows="dynamic",
+                column_config={
+                    "dosya_id": None,
+                    "statu_kodu": None,
+                    "Dosya No / Daire": st.column_config.TextColumn(width="medium"),
+                    "Açılış Tarihi": st.column_config.TextColumn(width="small"),
+                    "Borçlu(lar)": st.column_config.TextColumn(width="large"),
+                    "Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Takip Öncesi Faiz": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Takip Sonrası Faiz": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Toplam Faiz": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Toplam Alacak": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Tahsil Edilen": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Kalan Bakiye": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Dosya Statüsü": st.column_config.TextColumn(width="medium"),
+                    "Müvekkile Rapor Notu": st.column_config.TextColumn(width="large")
+                }
+            )
+
+            if st.button("💾 Düzenlenen Rapor Notlarını Dosya Geçmişine Kalıcı Kaydet", key=f"btn_save_notes_f3_{secilen_muvekkil}"):
+                kaydedilen = 0
+                for _, r_item in edited_f3.iterrows():
+                    d_id_val = r_item.get("dosya_id")
+                    cur_not_txt = str(r_item.get("Müvekkile Rapor Notu", "")).strip()
+                    if d_id_val and cur_not_txt:
+                        cursor.execute("SELECT not_icerik FROM dosya_notlari WHERE dosya_id = ? ORDER BY id DESC LIMIT 1", (int(d_id_val),))
+                        check_cur = cursor.fetchone()
+                        if not check_cur or check_cur[0] != cur_not_txt:
+                            cursor.execute("INSERT INTO dosya_notlari (dosya_id, tarih, not_icerik) VALUES (?, ?, ?)", (int(d_id_val), str(date.today()), cur_not_txt))
+                            kaydedilen += 1
+                conn.commit()
+                invalidate_caches()
+                st.success(f"✅ {kaydedilen} dosyanın rapor notu dosya geçmişine başarıyla kaydedildi!")
+                st.rerun()
+
+            wb_f3 = openpyxl.Workbook()
+            ws_f3 = wb_f3.active
+            ws_f3.title = "Alacak ve Faiz Raporu"
+            ws_f3.views.sheetView[0].showGridLines = True
+
+            fill_f3_header = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
+            fill_f3_sub = PatternFill(start_color="1F2421", end_color="1F2421", fill_type="solid")
+            fill_f3_legend = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+            fill_f3_total = PatternFill(start_color="084840", end_color="084840", fill_type="solid")
+
+            fill_f3_infaz = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+            font_f3_infaz = Font(name="Arial", size=10, bold=True, color="166534")
+
+            fill_f3_itiraz = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+            font_f3_itiraz = Font(name="Arial", size=10, bold=True, color="991B1B")
+
+            fill_f3_kesin = PatternFill(start_color="E0F2FE", end_color="E0F2FE", fill_type="solid")
+            font_f3_kesin = Font(name="Arial", size=10, bold=True, color="075985")
+
+            fill_f3_acik = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+            font_f3_acik = Font(name="Arial", size=10, bold=True, color="334155")
+
+            ws_f3.merge_cells("A1:L1")
+            ws_f3["A1"] = f"JUS LEGAL | {secilen_muvekkil.upper()} ALACAK & FAİZ DETAYLI PORTFÖY DURUM RAPORU"
+            ws_f3["A1"].font = font_title
+            ws_f3["A1"].fill = fill_f3_header
+            ws_f3["A1"].alignment = Alignment(horizontal="center", vertical="center")
+            ws_f3.row_dimensions[1].height = 36
+
+            ws_f3.merge_cells("A2:L2")
+            ws_f3["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Dosya: {len(edited_f3)} | Asıl Alacak: {format_tr_money(top_f3_asl)} | Toplam Faiz: {format_tr_money(top_f3_top_f)} | Genel Alacak: {format_tr_money(top_f3_alacak)} | Tahsilat: {format_tr_money(top_f3_tahsilat)}"
+            ws_f3["A2"].font = Font(name="Arial", size=9, italic=True, color="334155")
+            ws_f3["A2"].alignment = Alignment(horizontal="center", vertical="center")
+            ws_f3.row_dimensions[2].height = 20
+
+            ws_f3.merge_cells("A3:L3")
+            ws_f3["A3"] = f"RENK LEJANDI:  🔒 İnfazen Kapatıldı ({cnt_f3_infaz}) [Yeşil]   |   🚨 İtiraz Edildi ({cnt_f3_itiraz}) [Kırmızı]   |   ✅ Kesinleşti ({cnt_f3_kesin}) [Mavi]   |   📂 Açık/Derdest ({cnt_f3_acik}) [Beyaz]"
+            ws_f3["A3"].font = font_legend
+            ws_f3["A3"].fill = fill_f3_legend
+            ws_f3["A3"].alignment = Alignment(horizontal="center", vertical="center")
+            ws_f3["A3"].border = thin_border
+            ws_f3.row_dimensions[3].height = 22
+
+            headers_f3 = [
+                "Dosya No / İcra Dairesi",
+                "Açılış Tarihi",
+                "Borçlu Firma / Kişi",
+                "Asıl Alacak",
+                "Takip Öncesi Faiz",
+                "Takip Sonrası Faiz",
+                "Toplam Faiz",
+                "Toplam Alacak",
+                "Tahsil Edilen",
+                "Kalan Bakiye",
+                "Dosya Statüsü",
+                "Müvekkile Rapor Notu"
+            ]
+
+            for c_i, h_txt in enumerate(headers_f3, start=1):
+                c = ws_f3.cell(row=4, column=c_i, value=h_txt)
+                c.fill = fill_f3_sub
+                c.font = font_sub
+                c.alignment = Alignment(horizontal="center", vertical="center")
+                c.border = thin_border
+            ws_f3.row_dimensions[4].height = 26
+
+            row_f3_idx = 5
+            for _, r_f3 in edited_f3.iterrows():
+                st_kod = str(r_f3.get("statu_kodu", ""))
+                st_met = str(r_f3.get("Dosya Statüsü", ""))
+                if "INFAZ" in st_kod or "İnfaz" in st_met:
+                    s_fill = fill_f3_infaz
+                    s_font = font_f3_infaz
+                elif "ITIRAZ" in st_kod or "İtiraz" in st_met:
+                    s_fill = fill_f3_itiraz
+                    s_font = font_f3_itiraz
+                elif "KESIN" in st_kod or "Kesinleşti" in st_met:
+                    s_fill = fill_f3_kesin
+                    s_font = font_f3_kesin
+                else:
+                    s_fill = fill_f3_acik
+                    s_font = font_f3_acik
+
+                f3_vals = [
+                    str(r_f3["Dosya No / Daire"]),
+                    str(r_f3.get("Açılış Tarihi", "-")),
+                    str(r_f3["Borçlu(lar)"]),
+                    float(r_f3["Asıl Alacak"]),
+                    float(r_f3["Takip Öncesi Faiz"]),
+                    float(r_f3["Takip Sonrası Faiz"]),
+                    float(r_f3["Toplam Faiz"]),
+                    float(r_f3["Toplam Alacak"]),
+                    float(r_f3["Tahsil Edilen"]),
+                    float(r_f3["Kalan Bakiye"]),
+                    str(r_f3["Dosya Statüsü"]),
+                    str(r_f3.get("Müvekkile Rapor Notu", ""))
+                ]
+
+                for col_idx, val in enumerate(f3_vals, start=1):
+                    cell = ws_f3.cell(row=row_f3_idx, column=col_idx, value=val)
+                    cell.font = font_reg
+                    cell.border = thin_border
+                    if row_f3_idx % 2 == 1:
+                        cell.fill = fill_zebra
+
+                    if col_idx == 11:
+                        cell.fill = s_fill
+                        cell.font = s_font
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                    elif isinstance(val, (float, int)) and col_idx in [4, 5, 6, 7, 8, 9, 10]:
+                        cell.number_format = '#,##0.00 "TL"'
+                        cell.alignment = Alignment(horizontal="right", vertical="top")
+                        if col_idx in [4, 8]:
+                            cell.font = Font(name="Arial", size=10, bold=True, color="000000")
+                        elif col_idx == 9:
+                            cell.font = Font(name="Arial", size=10, bold=True, color="166534")
+                    else:
+                        cell.alignment = Alignment(horizontal="center" if col_idx in [1, 2] else "left", vertical="top", wrap_text=(col_idx == 12))
+
+                ws_f3.row_dimensions[row_f3_idx].height = 32
+                row_f3_idx += 1
+
+            ws_f3.cell(row=row_f3_idx, column=1, value="TOPLAM PORTFÖY ÖZETİ").font = font_total
+            ws_f3.merge_cells(start_row=row_f3_idx, start_column=1, end_row=row_f3_idx, end_column=3)
+
+            f3_totals_map = {
+                4: top_f3_asl,
+                5: top_f3_on_f,
+                6: top_f3_son_f,
+                7: top_f3_top_f,
+                8: top_f3_alacak,
+                9: top_f3_tahsilat,
+                10: top_f3_kalan
+            }
+
+            for col_idx in range(1, 13):
+                c_tot = ws_f3.cell(row=row_f3_idx, column=col_idx)
+                c_tot.fill = fill_f3_total
+                c_tot.font = font_total
+                c_tot.border = thin_border
+                if col_idx in f3_totals_map:
+                    c_tot.value = f3_totals_map[col_idx]
+                    c_tot.number_format = '#,##0.00 "TL"'
+                    c_tot.alignment = Alignment(horizontal="right", vertical="center")
+            ws_f3.row_dimensions[row_f3_idx].height = 28
+
+            ws_f3.column_dimensions["A"].width = 26
+            ws_f3.column_dimensions["B"].width = 15
+            ws_f3.column_dimensions["C"].width = 28
+            ws_f3.column_dimensions["D"].width = 20
+            ws_f3.column_dimensions["E"].width = 20
+            ws_f3.column_dimensions["F"].width = 20
+            ws_f3.column_dimensions["G"].width = 20
+            ws_f3.column_dimensions["H"].width = 22
+            ws_f3.column_dimensions["I"].width = 20
+            ws_f3.column_dimensions["J"].width = 20
+            ws_f3.column_dimensions["K"].width = 24
+            ws_f3.column_dimensions["L"].width = 50
+
+            buf_f3 = io.BytesIO()
+            wb_f3.save(buf_f3)
+            excel_bytes_f3 = buf_f3.getvalue()
+
+            st.write("")
+            st.download_button(
+                label="📥 Format 3: Alacak & Faiz Detaylı Portföy Raporunu İndir (.xlsx)",
+                data=excel_bytes_f3,
+                file_name=make_safe_filename(secilen_muvekkil, "Alacak_Faiz_Portfoy_Raporu"),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True,
+                on_click="ignore",
+                key=f"btn_dl_faiz_detay_{secilen_muvekkil}"
+            )
 
 
 
