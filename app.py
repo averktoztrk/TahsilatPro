@@ -1547,15 +1547,16 @@ if menu == "Dosya Arama & Çalışma Masası":
             )
 
             if cache_key in calc_cache:
-                rem_p, rem_i, tot_pay, m_list = calc_cache[cache_key]
+                rem_p, rem_i, tot_pay, m_list, *_ = calc_cache[cache_key]
             else:
-                rem_p, rem_i, tot_pay, m_list, *_ = hesapla_kademeli_dosya_hesabi(
+                res_main = hesapla_kademeli_dosya_hesabi(
                     r['ana_para'], r['faiz_orani'], r['takip_tarihi'], r['t_oncesi_faiz'], tahsilat_df,
                     faiz_turu=r.get('faiz_turu', 'Özel Oran'),
                     masraflar_df=masraf_df,
                     alacak_kalemleri_df=ak_df
                 )
-                calc_cache[cache_key] = (rem_p, rem_i, tot_pay, m_list)
+                rem_p, rem_i, tot_pay, m_list = res_main[0], res_main[1], res_main[2], res_main[3]
+                calc_cache[cache_key] = res_main
             
             cikis_tutari = float(r['takip_cikisi'])
             t_harc_oran = float(r.get('tahsil_harci_orani', 9.10) if pd.notnull(r.get('tahsil_harci_orani')) else 9.10)
