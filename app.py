@@ -2355,6 +2355,15 @@ elif menu == "Müvekkil Portföy & Raporlama":
         m_all_m = pd.read_sql_query(f"SELECT * FROM masraflar WHERE dosya_id IN {m_ids} ORDER BY tarih ASC", conn)
         m_all_n = pd.read_sql_query(f"SELECT * FROM dosya_notlari WHERE dosya_id IN {m_ids} ORDER BY tarih DESC, id DESC", conn)
         m_all_ak = pd.read_sql_query(f"SELECT * FROM alacak_kalemleri WHERE dosya_id IN {m_ids}", conn)
+        m_t_grp = dict(tuple(m_all_t.groupby("dosya_id"))) if not m_all_t.empty else {}
+        m_m_grp = dict(tuple(m_all_m.groupby("dosya_id"))) if not m_all_m.empty else {}
+        m_n_grp = dict(tuple(m_all_n.groupby("dosya_id"))) if not m_all_n.empty else {}
+        m_ak_grp = dict(tuple(m_all_ak.groupby("dosya_id"))) if not m_all_ak.empty else {}
+
+        m_emp_t = pd.DataFrame(columns=["id", "dosya_id", "tarih", "tutar", "aciklama"])
+        m_emp_m = pd.DataFrame(columns=["id", "dosya_id", "tarih", "aciklama", "masraf_tutari", "iade_tutari"])
+        m_emp_n = pd.DataFrame(columns=["id", "dosya_id", "tarih", "not_icerik"])
+        m_emp_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani", "kalem_turu", "sorumlu_borclular"])
 
         font_title = Font(name="Arial", size=13, bold=True, color="FFFFFF")
         font_sub = Font(name="Arial", size=10, bold=True, color="FFFFFF")
@@ -2381,16 +2390,6 @@ elif menu == "Müvekkil Portföy & Raporlama":
         )
 
         if secilen_format == "📊 Format 1: Dosya Bazlı Portföy Durum Raporu":
-            m_t_grp = dict(tuple(m_all_t.groupby("dosya_id"))) if not m_all_t.empty else {}
-            m_m_grp = dict(tuple(m_all_m.groupby("dosya_id"))) if not m_all_m.empty else {}
-            m_n_grp = dict(tuple(m_all_n.groupby("dosya_id"))) if not m_all_n.empty else {}
-            m_ak_grp = dict(tuple(m_all_ak.groupby("dosya_id"))) if not m_all_ak.empty else {}
-
-            m_emp_t = pd.DataFrame(columns=["id", "dosya_id", "tarih", "tutar", "aciklama"])
-            m_emp_m = pd.DataFrame(columns=["id", "dosya_id", "tarih", "aciklama", "masraf_tutari", "iade_tutari"])
-            m_emp_n = pd.DataFrame(columns=["id", "dosya_id", "tarih", "not_icerik"])
-            m_emp_ak = pd.DataFrame(columns=["id", "dosya_id", "kalem_adi", "tutar", "t_oncesi_faiz", "faiz_turu", "faiz_orani", "kalem_turu", "sorumlu_borclular"])
-
             rapor_satirlari = []
             for _, d_row in m_dosyalar.iterrows():
                 d_id = int(d_row['id'])
