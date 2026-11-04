@@ -390,6 +390,25 @@ def make_safe_filename(text, suffix):
         cleaned = "Jus_Legal"
     return f"{cleaned}_{suffix}.xlsx"
 
+def extract_asil_alacak_ve_faiz(d_row, ak_df):
+    if ak_df is not None and not ak_df.empty:
+        calc_ana_para = 0.0
+        calc_t_oncesi_faiz = 0.0
+        for _, itm_row in ak_df.iterrows():
+            k_adi = str(itm_row.get("kalem_adi", ""))
+            k_turu = str(itm_row.get("kalem_turu", ""))
+            is_faiz_item = bool(re.search(r"faiz", k_adi, re.I) or re.search(r"faiz", k_turu, re.I))
+            raw_t = float(itm_row.get("tutar", 0.0) or 0.0)
+            raw_f = float(itm_row.get("t_oncesi_faiz", 0.0) or 0.0)
+            if is_faiz_item:
+                calc_t_oncesi_faiz += (raw_t + raw_f)
+            else:
+                calc_ana_para += raw_t
+                calc_t_oncesi_faiz += raw_f
+        return round(calc_ana_para, 2), round(calc_t_oncesi_faiz, 2)
+    else:
+        return float(d_row.get('ana_para', 0.0) or 0.0), float(d_row.get('t_oncesi_faiz', 0.0) or 0.0)
+
 def hesapla_icra_vekalet_ucreti(takip_cikisi):
     if takip_cikisi <= 0:
         return 0.0
@@ -591,10 +610,22 @@ def hesapla_kademeli_dosya_hesabi(ana_para, faiz_orani, takip_tarihi_str, t_once
     if has_custom_items:
         items = []
         for _, itm in alacak_kalemleri_df.iterrows():
+            k_adi = str(itm.get("kalem_adi", "Alacak"))
+            k_turu = str(itm.get("kalem_turu", ""))
+            is_faiz_item = bool(re.search(r"faiz", k_adi, re.I) or re.search(r"faiz", k_turu, re.I))
+            raw_tutar = float(itm.get("tutar", 0.0) or 0.0)
+            raw_pre_i = float(itm.get("t_oncesi_faiz", 0.0) or 0.0)
+            if is_faiz_item:
+                p_val = 0.0
+                pre_i_val = raw_tutar + raw_pre_i
+            else:
+                p_val = raw_tutar
+                pre_i_val = raw_pre_i
+
             items.append({
-                "adi": itm.get("kalem_adi", "Alacak"),
-                "principal": float(itm.get("tutar", 0.0)),
-                "pre_interest": float(itm.get("t_oncesi_faiz", 0.0)),
+                "adi": k_adi,
+                "principal": p_val,
+                "pre_interest": pre_i_val,
                 "post_interest": 0.0,
                 "faiz_turu": itm.get("faiz_turu", faiz_turu),
                 "faiz_orani": float(itm.get("faiz_orani", faiz_orani))
@@ -2426,7 +2457,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     )
                     rem_p, rem_i, tot_pay, m_list = res_f1[0], res_f1[1], res_f1[2], res_f1[3]; calc_cache[cache_key] = res_f1
 
-                ana_para = float(d_row['ana_para'])
+                ana_para, _ = extract_asil_alacak_ve_faiz(d_row, m_ak_df)
 
                 not_metinleri = [nr['not_icerik'] for _, nr in n_df.iterrows()]
                 son_not = not_metinleri[0] if not_metinleri else "İşlem aşamasında."
@@ -3127,8 +3158,8 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     rem_p, rem_tot_i, tot_pay = res[0], res[1], res[2]
                     tot_acc_post_i = res[6] if len(res) > 6 else 0.0
 
-                baslangic_ana_para = float(d_row.get('ana_para', 0.0) or 0.0)
-                takip_oncesi_faiz = float(d_row.get('t_oncesi_faiz', 0.0) or 0.0)
+                baslangic_ana_para, takip_oncesi_faiz = extract_asil_alacak_ve_faiz(d_row, m_ak_df)
+                # takip_oncesi_faiz extracted cleanly
                 takip_sonrasi_faiz = float(tot_acc_post_i or 0.0)
                 toplam_faiz = round(takip_oncesi_faiz + takip_sonrasi_faiz, 2)
                 toplam_alacak = round(baslangic_ana_para + toplam_faiz, 2)
