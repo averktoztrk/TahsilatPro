@@ -390,25 +390,6 @@ def make_safe_filename(text, suffix):
         cleaned = "Jus_Legal"
     return f"{cleaned}_{suffix}.xlsx"
 
-def extract_asil_alacak_ve_faiz(d_row, ak_df):
-    if ak_df is not None and not ak_df.empty:
-        calc_ana_para = 0.0
-        calc_t_oncesi_faiz = 0.0
-        for _, itm_row in ak_df.iterrows():
-            k_adi = str(itm_row.get("kalem_adi", ""))
-            k_turu = str(itm_row.get("kalem_turu", ""))
-            is_faiz_item = bool(re.search(r"faiz", k_adi, re.I) or re.search(r"faiz", k_turu, re.I))
-            raw_t = float(itm_row.get("tutar", 0.0) or 0.0)
-            raw_f = float(itm_row.get("t_oncesi_faiz", 0.0) or 0.0)
-            if is_faiz_item:
-                calc_t_oncesi_faiz += (raw_t + raw_f)
-            else:
-                calc_ana_para += raw_t
-                calc_t_oncesi_faiz += raw_f
-        return round(calc_ana_para, 2), round(calc_t_oncesi_faiz, 2)
-    else:
-        return float(d_row.get('ana_para', 0.0) or 0.0), float(d_row.get('t_oncesi_faiz', 0.0) or 0.0)
-
 def hesapla_icra_vekalet_ucreti(takip_cikisi):
     if takip_cikisi <= 0:
         return 0.0
@@ -610,22 +591,10 @@ def hesapla_kademeli_dosya_hesabi(ana_para, faiz_orani, takip_tarihi_str, t_once
     if has_custom_items:
         items = []
         for _, itm in alacak_kalemleri_df.iterrows():
-            k_adi = str(itm.get("kalem_adi", "Alacak"))
-            k_turu = str(itm.get("kalem_turu", ""))
-            is_faiz_item = bool(re.search(r"faiz", k_adi, re.I) or re.search(r"faiz", k_turu, re.I))
-            raw_tutar = float(itm.get("tutar", 0.0) or 0.0)
-            raw_pre_i = float(itm.get("t_oncesi_faiz", 0.0) or 0.0)
-            if is_faiz_item:
-                p_val = 0.0
-                pre_i_val = raw_tutar + raw_pre_i
-            else:
-                p_val = raw_tutar
-                pre_i_val = raw_pre_i
-
             items.append({
-                "adi": k_adi,
-                "principal": p_val,
-                "pre_interest": pre_i_val,
+                "adi": itm.get("kalem_adi", "Alacak"),
+                "principal": float(itm.get("tutar", 0.0) or 0.0),
+                "pre_interest": float(itm.get("t_oncesi_faiz", 0.0) or 0.0),
                 "post_interest": 0.0,
                 "faiz_turu": itm.get("faiz_turu", faiz_turu),
                 "faiz_orani": float(itm.get("faiz_orani", faiz_orani))
@@ -2457,7 +2426,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     )
                     rem_p, rem_i, tot_pay, m_list = res_f1[0], res_f1[1], res_f1[2], res_f1[3]; calc_cache[cache_key] = res_f1
 
-                ana_para, _ = extract_asil_alacak_ve_faiz(d_row, m_ak_df)
+                ana_para = float(d_row['ana_para'])
 
                 not_metinleri = [nr['not_icerik'] for _, nr in n_df.iterrows()]
                 son_not = not_metinleri[0] if not_metinleri else "İşlem aşamasında."
@@ -3158,11 +3127,10 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     rem_p, rem_tot_i, tot_pay = res[0], res[1], res[2]
                     tot_acc_post_i = res[6] if len(res) > 6 else 0.0
 
-                baslangic_ana_para, takip_oncesi_faiz = extract_asil_alacak_ve_faiz(d_row, m_ak_df)
-                # takip_oncesi_faiz extracted cleanly
+                baslangic_ana_para = float(d_row.get('ana_para', 0.0) or 0.0)
+                takip_oncesi_faiz = float(d_row.get('t_oncesi_faiz', 0.0) or 0.0)
                 takip_sonrasi_faiz = float(tot_acc_post_i or 0.0)
-                toplam_faiz = round(takip_oncesi_faiz + takip_sonrasi_faiz, 2)
-                toplam_alacak = round(baslangic_ana_para + toplam_faiz, 2)
+                toplam_alacak = round(baslangic_ana_para + takip_oncesi_faiz + takip_sonrasi_faiz, 2)
                 tahsil_edilen = float(tot_pay or 0.0)
                 kalan_borc = 0.0 if is_infaz_d else max(0.0, round(float(rem_p + rem_tot_i), 2))
 
@@ -3184,7 +3152,6 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     "Asıl Alacak": baslangic_ana_para,
                     "Takip Öncesi Faiz": takip_oncesi_faiz,
                     "Takip Sonrası Faiz": takip_sonrasi_faiz,
-                    "Toplam Faiz": toplam_faiz,
                     "Toplam Alacak": toplam_alacak,
                     "Tahsil Edilen": tahsil_edilen,
                     "Kalan Bakiye": kalan_borc,
@@ -3198,7 +3165,6 @@ elif menu == "Müvekkil Portföy & Raporlama":
             top_f3_asl = float(df_f3["Asıl Alacak"].sum()) if not df_f3.empty else 0.0
             top_f3_on_f = float(df_f3["Takip Öncesi Faiz"].sum()) if not df_f3.empty else 0.0
             top_f3_son_f = float(df_f3["Takip Sonrası Faiz"].sum()) if not df_f3.empty else 0.0
-            top_f3_top_f = float(df_f3["Toplam Faiz"].sum()) if not df_f3.empty else 0.0
             top_f3_alacak = float(df_f3["Toplam Alacak"].sum()) if not df_f3.empty else 0.0
             top_f3_tahsilat = float(df_f3["Tahsil Edilen"].sum()) if not df_f3.empty else 0.0
             top_f3_kalan = float(df_f3["Kalan Bakiye"].sum()) if not df_f3.empty else 0.0
@@ -3253,7 +3219,6 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     "Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
                     "Takip Öncesi Faiz": st.column_config.NumberColumn(format="%.2f TL"),
                     "Takip Sonrası Faiz": st.column_config.NumberColumn(format="%.2f TL"),
-                    "Toplam Faiz": st.column_config.NumberColumn(format="%.2f TL"),
                     "Toplam Alacak": st.column_config.NumberColumn(format="%.2f TL"),
                     "Tahsil Edilen": st.column_config.NumberColumn(format="%.2f TL"),
                     "Kalan Bakiye": st.column_config.NumberColumn(format="%.2f TL"),
@@ -3300,20 +3265,20 @@ elif menu == "Müvekkil Portföy & Raporlama":
             fill_f3_acik = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
             font_f3_acik = Font(name="Arial", size=10, bold=True, color="334155")
 
-            ws_f3.merge_cells("A1:L1")
+            ws_f3.merge_cells("A1:K1")
             ws_f3["A1"] = f"JUS LEGAL | {secilen_muvekkil.upper()} ALACAK & FAİZ DETAYLI PORTFÖY DURUM RAPORU"
             ws_f3["A1"].font = font_title
             ws_f3["A1"].fill = fill_f3_header
             ws_f3["A1"].alignment = Alignment(horizontal="center", vertical="center")
             ws_f3.row_dimensions[1].height = 36
 
-            ws_f3.merge_cells("A2:L2")
-            ws_f3["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Dosya: {len(edited_f3)} | Asıl Alacak: {format_tr_money(top_f3_asl)} | Toplam Faiz: {format_tr_money(top_f3_top_f)} | Genel Alacak: {format_tr_money(top_f3_alacak)} | Tahsilat: {format_tr_money(top_f3_tahsilat)}"
+            ws_f3.merge_cells("A2:K2")
+            ws_f3["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Dosya: {len(edited_f3)} | Asıl Alacak: {format_tr_money(top_f3_asl)} | Takip Öncesi Faiz: {format_tr_money(top_f3_on_f)} | Takip Sonrası Faiz: {format_tr_money(top_f3_son_f)} | Genel Alacak: {format_tr_money(top_f3_alacak)} | Tahsilat: {format_tr_money(top_f3_tahsilat)}"
             ws_f3["A2"].font = Font(name="Arial", size=9, italic=True, color="334155")
             ws_f3["A2"].alignment = Alignment(horizontal="center", vertical="center")
             ws_f3.row_dimensions[2].height = 20
 
-            ws_f3.merge_cells("A3:L3")
+            ws_f3.merge_cells("A3:K3")
             ws_f3["A3"] = f"RENK LEJANDI:  🔒 İnfazen Kapatıldı ({cnt_f3_infaz}) [Yeşil]   |   🚨 İtiraz Edildi ({cnt_f3_itiraz}) [Kırmızı]   |   ✅ Kesinleşti ({cnt_f3_kesin}) [Mavi]   |   📂 Açık/Derdest ({cnt_f3_acik}) [Beyaz]"
             ws_f3["A3"].font = font_legend
             ws_f3["A3"].fill = fill_f3_legend
@@ -3328,7 +3293,6 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 "Asıl Alacak",
                 "Takip Öncesi Faiz",
                 "Takip Sonrası Faiz",
-                "Toplam Faiz",
                 "Toplam Alacak",
                 "Tahsil Edilen",
                 "Kalan Bakiye",
@@ -3368,7 +3332,6 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     float(r_f3["Asıl Alacak"]),
                     float(r_f3["Takip Öncesi Faiz"]),
                     float(r_f3["Takip Sonrası Faiz"]),
-                    float(r_f3["Toplam Faiz"]),
                     float(r_f3["Toplam Alacak"]),
                     float(r_f3["Tahsil Edilen"]),
                     float(r_f3["Kalan Bakiye"]),
@@ -3383,19 +3346,19 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     if row_f3_idx % 2 == 1:
                         cell.fill = fill_zebra
 
-                    if col_idx == 11:
+                    if col_idx == 10:
                         cell.fill = s_fill
                         cell.font = s_font
                         cell.alignment = Alignment(horizontal="center", vertical="center")
-                    elif isinstance(val, (float, int)) and col_idx in [4, 5, 6, 7, 8, 9, 10]:
+                    elif isinstance(val, (float, int)) and col_idx in [4, 5, 6, 7, 8, 9]:
                         cell.number_format = '#,##0.00 "TL"'
                         cell.alignment = Alignment(horizontal="right", vertical="top")
-                        if col_idx in [4, 8]:
+                        if col_idx in [4, 7]:
                             cell.font = Font(name="Arial", size=10, bold=True, color="000000")
-                        elif col_idx == 9:
+                        elif col_idx == 8:
                             cell.font = Font(name="Arial", size=10, bold=True, color="166534")
                     else:
-                        cell.alignment = Alignment(horizontal="center" if col_idx in [1, 2] else "left", vertical="top", wrap_text=(col_idx == 12))
+                        cell.alignment = Alignment(horizontal="center" if col_idx in [1, 2] else "left", vertical="top", wrap_text=(col_idx == 11))
 
                 ws_f3.row_dimensions[row_f3_idx].height = 32
                 row_f3_idx += 1
@@ -3407,13 +3370,12 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 4: top_f3_asl,
                 5: top_f3_on_f,
                 6: top_f3_son_f,
-                7: top_f3_top_f,
-                8: top_f3_alacak,
-                9: top_f3_tahsilat,
-                10: top_f3_kalan
+                7: top_f3_alacak,
+                8: top_f3_tahsilat,
+                9: top_f3_kalan
             }
 
-            for col_idx in range(1, 13):
+            for col_idx in range(1, 12):
                 c_tot = ws_f3.cell(row=row_f3_idx, column=col_idx)
                 c_tot.fill = fill_f3_total
                 c_tot.font = font_total
@@ -3430,12 +3392,11 @@ elif menu == "Müvekkil Portföy & Raporlama":
             ws_f3.column_dimensions["D"].width = 20
             ws_f3.column_dimensions["E"].width = 20
             ws_f3.column_dimensions["F"].width = 20
-            ws_f3.column_dimensions["G"].width = 20
-            ws_f3.column_dimensions["H"].width = 22
+            ws_f3.column_dimensions["G"].width = 22
+            ws_f3.column_dimensions["H"].width = 20
             ws_f3.column_dimensions["I"].width = 20
-            ws_f3.column_dimensions["J"].width = 20
-            ws_f3.column_dimensions["K"].width = 24
-            ws_f3.column_dimensions["L"].width = 50
+            ws_f3.column_dimensions["J"].width = 24
+            ws_f3.column_dimensions["K"].width = 50
 
             buf_f3 = io.BytesIO()
             wb_f3.save(buf_f3)
