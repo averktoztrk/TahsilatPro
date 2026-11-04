@@ -3195,10 +3195,10 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     target_hesap_tarihi
                 )
 
+                # 1. Mahsuplu hesap (kalan bakiye ve gerçek tahsilat için)
                 if cache_key in calc_cache and len(calc_cache[cache_key]) >= 7:
                     c_res = calc_cache[cache_key]
                     rem_p, rem_tot_i, tot_pay = c_res[0], c_res[1], c_res[2]
-                    tot_acc_post_i = c_res[6]
                 else:
                     res = hesapla_kademeli_dosya_hesabi(
                         d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], t_df,
@@ -3209,11 +3209,33 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     )
                     calc_cache[cache_key] = res
                     rem_p, rem_tot_i, tot_pay = res[0], res[1], res[2]
-                    tot_acc_post_i = res[6] if len(res) > 6 else 0.0
+
+                # 2. Mahsupsuz brüt hesap (başlangıç ana para ve brüt takip sonrası faiz için)
+                cache_key_raw = (
+                    int(d_id),
+                    "RAW_F3",
+                    str(d_row.get('takip_tarihi', '')),
+                    float(d_row.get('ana_para', 0.0)),
+                    float(d_row.get('faiz_orani', 0.0)),
+                    str(d_row.get('faiz_turu', '')),
+                    float(d_row.get('t_oncesi_faiz', 0.0)),
+                    target_hesap_tarihi
+                )
+                if cache_key_raw in calc_cache:
+                    res_raw = calc_cache[cache_key_raw]
+                else:
+                    res_raw = hesapla_kademeli_dosya_hesabi(
+                        d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], pd.DataFrame(),
+                        hesap_tarihi=target_hesap_tarihi,
+                        faiz_turu=d_row.get('faiz_turu', 'Özel Oran'),
+                        masraflar_df=m_df,
+                        alacak_kalemleri_df=m_ak_df
+                    )
+                    calc_cache[cache_key_raw] = res_raw
 
                 baslangic_ana_para = hesapla_temiz_asil_alacak(d_row, m_ak_df)
                 takip_oncesi_faiz = float(d_row.get('t_oncesi_faiz', 0.0) or 0.0)
-                takip_sonrasi_faiz = float(tot_acc_post_i or 0.0)
+                takip_sonrasi_faiz = float(res_raw[5] or 0.0)
                 toplam_alacak = round(baslangic_ana_para + takip_oncesi_faiz + takip_sonrasi_faiz, 2)
                 tahsil_edilen = float(tot_pay or 0.0)
                 kalan_borc = 0.0 if is_infaz_d else max(0.0, round(float(rem_p + rem_tot_i), 2))
@@ -3233,7 +3255,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     "Dosya No / Daire": f"{d_row['il']} {d_row['icra_dairesi']} {d_row['dosya_no']}",
                     "Açılış Tarihi": acilis_tarihi_fmt,
                     "Borçlu(lar)": str(d_row['borclu']),
-                    "Asıl Alacak": baslangic_ana_para,
+                    "Başlangıç Ana Para": baslangic_ana_para,
                     "Takip Öncesi Faiz": takip_oncesi_faiz,
                     "Takip Sonrası Faiz": takip_sonrasi_faiz,
                     "Toplam Alacak": toplam_alacak,
@@ -3246,7 +3268,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
             df_f3 = pd.DataFrame(f3_satirlari)
 
             top_f3_dosya = len(df_f3)
-            top_f3_asl = float(df_f3["Asıl Alacak"].sum()) if not df_f3.empty else 0.0
+            top_f3_asl = float(df_f3["Başlangıç Ana Para"].sum()) if not df_f3.empty else 0.0
             top_f3_on_f = float(df_f3["Takip Öncesi Faiz"].sum()) if not df_f3.empty else 0.0
             top_f3_son_f = float(df_f3["Takip Sonrası Faiz"].sum()) if not df_f3.empty else 0.0
             top_f3_alacak = float(df_f3["Toplam Alacak"].sum()) if not df_f3.empty else 0.0
@@ -3256,7 +3278,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
             st.write("")
             f3_m1, f3_m2, f3_m3, f3_m4, f3_m5, f3_m6 = st.columns(6)
             f3_m1.metric("Toplam Dosya", f"{top_f3_dosya} Adet")
-            f3_m2.metric("Toplam Asıl Alacak", format_tr_money(top_f3_asl))
+            f3_m2.metric("Toplam Başlangıç Ana Para", format_tr_money(top_f3_asl))
             f3_m3.metric("Takip Öncesi Faiz", format_tr_money(top_f3_on_f))
             f3_m4.metric("Takip Sonrası Faiz", format_tr_money(top_f3_son_f))
             f3_m5.metric("Genel Alacak (Ana Para+Faiz)", format_tr_money(top_f3_alacak))
@@ -3300,7 +3322,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     "Dosya No / Daire": st.column_config.TextColumn(width="medium"),
                     "Açılış Tarihi": st.column_config.TextColumn(width="small"),
                     "Borçlu(lar)": st.column_config.TextColumn(width="large"),
-                    "Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Başlangıç Ana Para": st.column_config.NumberColumn(format="%.2f TL"),
                     "Takip Öncesi Faiz": st.column_config.NumberColumn(format="%.2f TL"),
                     "Takip Sonrası Faiz": st.column_config.NumberColumn(format="%.2f TL"),
                     "Toplam Alacak": st.column_config.NumberColumn(format="%.2f TL"),
@@ -3357,7 +3379,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
             ws_f3.row_dimensions[1].height = 36
 
             ws_f3.merge_cells("A2:K2")
-            ws_f3["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Dosya: {len(edited_f3)} | Asıl Alacak: {format_tr_money(top_f3_asl)} | Takip Öncesi Faiz: {format_tr_money(top_f3_on_f)} | Takip Sonrası Faiz: {format_tr_money(top_f3_son_f)} | Genel Alacak: {format_tr_money(top_f3_alacak)} | Tahsilat: {format_tr_money(top_f3_tahsilat)}"
+            ws_f3["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Toplam Dosya: {len(edited_f3)} | Başlangıç Ana Para: {format_tr_money(top_f3_asl)} | Takip Öncesi Faiz: {format_tr_money(top_f3_on_f)} | Takip Sonrası Faiz: {format_tr_money(top_f3_son_f)} | Genel Alacak: {format_tr_money(top_f3_alacak)} | Tahsilat: {format_tr_money(top_f3_tahsilat)}"
             ws_f3["A2"].font = Font(name="Arial", size=9, italic=True, color="334155")
             ws_f3["A2"].alignment = Alignment(horizontal="center", vertical="center")
             ws_f3.row_dimensions[2].height = 20
@@ -3374,7 +3396,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 "Dosya No / İcra Dairesi",
                 "Açılış Tarihi",
                 "Borçlu Firma / Kişi",
-                "Asıl Alacak",
+                "Başlangıç Ana Para",
                 "Takip Öncesi Faiz",
                 "Takip Sonrası Faiz",
                 "Toplam Alacak",
@@ -3413,7 +3435,7 @@ elif menu == "Müvekkil Portföy & Raporlama":
                     str(r_f3["Dosya No / Daire"]),
                     str(r_f3.get("Açılış Tarihi", "-")),
                     str(r_f3["Borçlu(lar)"]),
-                    float(r_f3["Asıl Alacak"]),
+                    float(r_f3["Başlangıç Ana Para"]),
                     float(r_f3["Takip Öncesi Faiz"]),
                     float(r_f3["Takip Sonrası Faiz"]),
                     float(r_f3["Toplam Alacak"]),
