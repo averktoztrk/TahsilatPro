@@ -11,6 +11,8 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from faiz_sync import kontrol_et_faiz_guncellemeleri, uygula_faiz_guncellemesi
 from udf_parser import parse_udf_file, parse_udf_files, UDF_IL_ILCE
+import dava_engine
+import dava_view
 
 # -------------------------------------------------------------
 # 1. GÜVENLİ KULLANICI YÖNETİMİ & ŞİFRELEME (AUTH)
@@ -1215,6 +1217,7 @@ def init_sqlite_tables_if_needed():
         FOREIGN KEY(dosya_id) REFERENCES dosyalar(id)
     )
     """)
+    dava_engine.init_dava_tables(cursor, conn)
     conn.commit()
 
 init_sqlite_tables_if_needed()
@@ -1272,6 +1275,7 @@ with st.sidebar:
         [
             "Dosya Arama & Çalışma Masası",
             "Müvekkil Portföy & Raporlama",
+            "⚖️ Dava Takip & Mahkeme Masası",
             "Yeni Dosya Açılışı",
             "Taraf (Cari) Yönetimi",
             "Masraf & Avans Kaydı",
@@ -1789,8 +1793,8 @@ if menu == "Dosya Arama & Çalışma Masası":
                 col_sol, col_sag = st.columns([1.55, 1.0])
 
                 with col_sol:
-                    t_durum, t_alacak, t_tahsilat, t_notlar, t_rapor, t_ayar = st.tabs([
-                        "📌 Durum", "📋 Alacak Kalemleri (UYAP)", "💰 Tahsilat (TBK 100)", "📝 Notlar", "📊 Müvekkil Raporu", "⚙️ Dosya Ayarları"
+                    t_durum, t_alacak, t_tahsilat, t_dava, t_notlar, t_rapor, t_ayar = st.tabs([
+                        "📌 Durum", "📋 Alacak Kalemleri (UYAP)", "💰 Tahsilat (TBK 100)", "⚖️ Bağlı Davalar", "📝 Notlar", "📊 Müvekkil Raporu", "⚙️ Dosya Ayarları"
                     ])
 
                     with t_alacak:
@@ -2020,6 +2024,15 @@ if menu == "Dosya Arama & Çalışma Masası":
                                         conn.commit()
                                         invalidate_caches()
                                         st.rerun()
+
+                    with t_dava:
+                        dava_view.render_bagli_davalar_tab(conn, cursor, secili_id, secili_dosya, {
+                            "accent_green": accent_green,
+                            "card_bg": card_bg,
+                            "card_border": card_border,
+                            "text_main": text_main,
+                            "text_muted": text_muted
+                        })
 
                     with t_notlar:
                         st.markdown("##### ➕ Yeni Not Ekle")
@@ -3522,6 +3535,18 @@ elif menu == "Müvekkil Portföy & Raporlama":
             )
 
 
+
+# -------------------------------------------------------------
+# 9.5 MODÜL: DAVA TAKİP & MAHKEME MASASI
+# -------------------------------------------------------------
+elif menu == "⚖️ Dava Takip & Mahkeme Masası":
+    dava_view.render_dava_modulu(conn, cursor, {
+        "accent_green": accent_green,
+        "card_bg": card_bg,
+        "card_border": card_border,
+        "text_main": text_main,
+        "text_muted": text_muted
+    })
 
 # -------------------------------------------------------------
 # 10. MODÜL 3: YENİ DOSYA AÇILIŞI
