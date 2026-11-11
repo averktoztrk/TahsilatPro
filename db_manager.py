@@ -53,6 +53,23 @@ class PostgresCursorWrapper:
         # Convert SQLite autoincrement syntax
         clean_sql = re.sub(r"(?i)INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT", "SERIAL PRIMARY KEY", clean_sql)
 
+        # Convert SQLite INSERT OR REPLACE INTO for PostgreSQL
+        if re.search(r"(?i)\bINSERT\s+OR\s+REPLACE\s+INTO\b", clean_sql):
+            if "sistem_ayarlari" in clean_sql.lower():
+                clean_sql = re.sub(
+                    r"(?i)INSERT\s+OR\s+REPLACE\s+INTO\s+sistem_ayarlari\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)",
+                    r"INSERT INTO sistem_ayarlari (\1) VALUES (\2) ON CONFLICT (anahtar) DO UPDATE SET deger = EXCLUDED.deger",
+                    clean_sql
+                )
+            else:
+                clean_sql = re.sub(r"(?i)INSERT\s+OR\s+REPLACE\s+INTO", "INSERT INTO", clean_sql)
+
+        # Convert SQLite INSERT OR IGNORE INTO for PostgreSQL
+        if re.search(r"(?i)\bINSERT\s+OR\s+IGNORE\s+INTO\b", clean_sql):
+            clean_sql = re.sub(r"(?i)INSERT\s+OR\s+IGNORE\s+INTO", "INSERT INTO", clean_sql)
+            if "ON CONFLICT" not in clean_sql.upper():
+                clean_sql = clean_sql.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
+
         # Normalize empty sequence to None so psycopg2 doesn't expect parameters
         if params is not None and len(params) == 0:
             params = None
@@ -68,7 +85,9 @@ class PostgresCursorWrapper:
         # Auto-append RETURNING id for single INSERT statements to support cursor.lastrowid
         is_insert = clean_sql.upper().startswith("INSERT INTO")
         if is_insert and "RETURNING" not in clean_sql.upper() and ";" not in clean_sql[:-1]:
-            clean_sql = clean_sql.rstrip().rstrip(";") + " RETURNING id;"
+            # Don't append RETURNING id for tables without an id column (e.g. sistem_ayarlari)
+            if "sistem_ayarlari" not in clean_sql.lower():
+                clean_sql = clean_sql.rstrip().rstrip(";") + " RETURNING id;"
 
         return clean_sql, params
 

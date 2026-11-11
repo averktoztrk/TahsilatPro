@@ -2,7 +2,7 @@ import json
 import os
 import sqlite3
 import urllib.request
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 DEFAULT_ONLINE_SOURCE = "https://raw.githubusercontent.com/juslegal/faiz-cetveli/main/faiz_oranlari.json"
 
@@ -119,11 +119,15 @@ def uygula_faiz_guncellemesi(conn, farklar):
                 guncellenen_sayisi += 1
             else:
                 # Yeni bir dilim eklemeden önce, aynı türün önceki açık dilimini kapat
+                try:
+                    prev_day = (datetime.strptime(b_tar, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+                except Exception:
+                    prev_day = b_tar
                 cur.execute("""
                     UPDATE faiz_oranlari
-                    SET bitis_tarihi = date(?, '-1 day')
+                    SET bitis_tarihi = ?
                     WHERE faiz_turu = ? AND bitis_tarihi >= '2099-01-01'
-                """, (b_tar, f_tur))
+                """, (prev_day, f_tur))
 
                 cur.execute("""
                     INSERT INTO faiz_oranlari (faiz_turu, baslangic_tarihi, bitis_tarihi, oran, aciklama)
@@ -139,8 +143,14 @@ def uygula_faiz_guncellemesi(conn, farklar):
             )
         """)
         now_str = datetime.now().strftime("%d.%m.%Y %H:%M")
-        cur.execute("INSERT OR REPLACE INTO sistem_ayarlari (anahtar, deger) VALUES ('son_faiz_guncelleme', ?)", (now_str,))
-        cur.execute("INSERT OR REPLACE INTO sistem_ayarlari (anahtar, deger) VALUES ('son_faiz_kontrol', ?)", (now_str,))
+        cur.execute("""
+            INSERT INTO sistem_ayarlari (anahtar, deger) VALUES ('son_faiz_guncelleme', ?)
+            ON CONFLICT (anahtar) DO UPDATE SET deger = EXCLUDED.deger
+        """, (now_str,))
+        cur.execute("""
+            INSERT INTO sistem_ayarlari (anahtar, deger) VALUES ('son_faiz_kontrol', ?)
+            ON CONFLICT (anahtar) DO UPDATE SET deger = EXCLUDED.deger
+        """, (now_str,))
 
         conn.commit()
         return True, f"Başarıyla güncellendi: {eklenen_sayisi} yeni dilim eklendi, {guncellenen_sayisi} dilim revize edildi."

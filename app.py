@@ -4089,7 +4089,11 @@ elif menu == "Yasal Faiz Cetveli":
             if st.button("🔍 Şimdi Güncellemeleri Denetle", type="primary", use_container_width=True):
                 yeni_st = kontrol_et_faiz_guncellemeleri(conn)
                 st.session_state["faiz_sync_status"] = yeni_st
-                cursor.execute("INSERT OR REPLACE INTO sistem_ayarlari (anahtar, deger) VALUES ('son_faiz_kontrol', ?)", (datetime.now().strftime("%d.%m.%Y %H:%M"),))
+                cursor.execute(
+                    "INSERT INTO sistem_ayarlari (anahtar, deger) VALUES ('son_faiz_kontrol', ?) "
+                    "ON CONFLICT (anahtar) DO UPDATE SET deger = EXCLUDED.deger",
+                    (datetime.now().strftime("%d.%m.%Y %H:%M"),)
+                )
                 conn.commit()
                 st.rerun()
 
