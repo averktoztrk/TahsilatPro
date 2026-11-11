@@ -118,18 +118,69 @@ def extract_text_from_udf(file_bytes):
     """
     UYAP Doküman Editörü (.udf) dosyalarını okur.
     UDF aslında content.xml barındıran bir ZIP arşividir.
+    Şablon bazlı belgelerde (Tevzi Formu vb.) XML etiketlerini CDATA şablonuyla
+    birleştirerek eksiksiz ve temiz metin üretir.
     """
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as zf:
             if 'content.xml' in zf.namelist():
                 xml_data = zf.read('content.xml')
-                root = ET.fromstring(xml_data)
-                texts = []
+                decoded_xml = None
+                for enc in ['utf-8', 'windows-1254', 'iso-8859-9']:
+                    try:
+                        decoded_xml = xml_data.decode(enc)
+                        break
+                    except Exception:
+                        pass
+                if not decoded_xml:
+                    decoded_xml = xml_data.decode('utf-8', errors='ignore')
+
+                root = ET.fromstring(decoded_xml)
+                
+                # 1. CDATA içeriğini al
+                cdata = ""
+                c_m = re.search(r'<content><!\[CDATA\[(.*?)\]\]></content>', decoded_xml, re.DOTALL)
+                if c_m:
+                    cdata = c_m.group(1)
+
+                # 2. Tüm etiketleri topla
+                tag_map = {}
                 for elem in root.iter():
                     if elem.text and elem.text.strip():
+                        tag_map.setdefault(elem.tag, []).append(elem.text.strip())
+
+                # 3. Eğer CDATA şablon etiketleri içeriyorsa (Tevzi Formu gibi)
+                if cdata and ("ilIlceMahkemeAdi" in cdata or "davaciAdSoyad" in cdata or "kayitNo" in cdata):
+                    rendered = cdata
+                    for tag, vals in tag_map.items():
+                        if tag not in ['content', 'taraf', 'tarafAdiSoyadi', 'harcMasrafTip', 'harcMasrafMiktari']:
+                            rendered = rendered.replace(tag, vals[0] if vals else '')
+
+                    # Tarafları satır satır yerleştir
+                    t_roller = tag_map.get('taraf', [])
+                    t_adlar = tag_map.get('tarafAdiSoyadi', [])
+                    t_lines = [f"{r} : {a}" for r, a in zip(t_roller, t_adlar)]
+                    if t_lines:
+                        rendered = re.sub(r'taraf\s*:\s*tarafAdiSoyadi', '\n'.join(t_lines), rendered)
+
+                    # Harç/Masrafları yerleştir
+                    m_tipler = tag_map.get('harcMasrafTip', [])
+                    m_tutarlar = tag_map.get('harcMasrafMiktari', [])
+                    m_lines = [f"{t} : {u}" for t, u in zip(m_tipler, m_tutarlar)]
+                    if m_lines:
+                        rendered = re.sub(r'harcMasrafTip\s*:\s*harcMasrafMiktari', '\n'.join(m_lines), rendered)
+
+                    return rendered
+
+                # Normal dokümanda (Tensip Zaptı, Karar vb.) CDATA varsa ve doluysa döndür
+                if cdata and len(cdata.strip()) > 50:
+                    return cdata
+
+                # Fallback: Tüm element metinlerini birleştir
+                texts = []
+                for elem in root.iter():
+                    if elem.text and elem.text.strip() and elem.tag != 'content':
                         texts.append(elem.text.strip())
-                    if elem.tail and elem.tail.strip():
-                        texts.append(elem.tail.strip())
                 return "\n".join(texts)
     except Exception:
         pass
@@ -204,31 +255,39 @@ def analyze_tensip_or_tevzi_text(text):
         "durusma_tarihi": "",
         "durusma_saati": "09:30",
         "asama": "Ön İnceleme",
+        "bagli_icra_no": "",
+        "bagli_icra_daire": "",
         "raw_text": text
     }
 
     if not text:
         return data
 
-    # 1. Mahkeme Adı
-    m_mahk = re.search(r"(?:T\.C\.\s*)?([A-ZÇĞİÖŞÜ\s0-9\.\-]+(?:MAHKEMESİ|HAKİMLİĞİ))", text, re.I)
+    # 1. Mahkeme Adı (Satır bazlı arama, önceki satırlardaki saat/sayı artık karışmaz)
+    m_mahk = re.search(r"(?:T\.C\.\s*)?([^\r\n]*?(?:MAHKEMES[İI]|HAK[İI]ML[İI]Ğ[İI]))", text, re.I)
     if m_mahk:
-        data["mahkeme_adi"] = m_mahk.group(1).strip()
+        raw_m = m_mahk.group(1).strip()
+        clean_m = re.sub(r"^[\s\(\)\[\]\{\}\d\.\,\:\-]+", "", raw_m).strip()
+        if clean_m:
+            data["mahkeme_adi"] = clean_m
 
-    # 2. Esas No
-    m_esas = re.search(r"ESAS\s*NO\s*[:\s]+(\d{4}\s*/\s*\d+)", text, re.I)
+    # 2. Esas / Kayıt No
+    m_esas = re.search(r"(?:ESAS\s*NO|KAYIT\s*NO|DOSYA\s*NO)\s*[:\t ]*(\d{4}\s*/\s*\d+)", text, re.I)
     if not m_esas:
-        m_esas = re.search(r"DOSYA\s*NO\s*[:\s]+(\d{4}\s*/\s*\d+)", text, re.I)
+        m_esas = re.search(r"\b(\d{4}\s*/\s*\d+)\s*(?:ESAS|E\.)\b", text, re.I)
     if m_esas:
-        data["dosya_no"] = m_esas.group(1).replace(" ", "") + " E."
+        kno = m_esas.group(1).replace(" ", "")
+        data["dosya_no"] = kno if (kno.endswith("E.") or kno.endswith("ESAS")) else f"{kno} E."
 
     # 3. Dava Türü
-    m_tur = re.search(r"DAVA\s*(?:TÜRÜ)?\s*[:\s]+([^\n\r]+)", text, re.I)
+    m_tur = re.search(r"DAVA\s*(?:TÜRÜ)?\s*[:\t ]*([^\r\n]+)", text, re.I)
     if m_tur:
-        data["dava_turu"] = m_tur.group(1).strip().strip(".-")
+        dtur_cand = m_tur.group(1).strip().strip(".-")
+        if dtur_cand.lower() not in ["davatarz", "davatarzi", "davatarzi"]:
+            data["dava_turu"] = dtur_cand
 
     # 4. Dava Tarihi
-    m_dt = re.search(r"DAVA\s*TARİHİ\s*[:\s]+(\d{2}[./]\d{2}[./]\d{4})", text, re.I)
+    m_dt = re.search(r"(?:DAVA\s*TARİHİ|AÇILIŞ\s*TARİHİ)\s*[:\t ]*(\d{2}[./]\d{2}[./]\d{4})", text, re.I)
     if m_dt:
         raw_d = m_dt.group(1).replace("/", ".")
         try:
@@ -236,26 +295,30 @@ def analyze_tensip_or_tevzi_text(text):
         except Exception:
             data["dava_tarihi"] = raw_d
 
-    # 5. Taraflar
-    m_davaci = re.search(r"DAVACI\s*[:\s]+([^\n\r]+)", text, re.I)
+    # 5. Taraflar (Müvekkil Davacı / Karşı Taraf Davalı)
+    m_davaci = re.search(r"(?:^|\n)\s*DAVACI\s*[:\t ]*([^\r\n]+)", text, re.I)
     if m_davaci:
-        data["alacakli"] = re.split(r"VEKİLİ|TC|VKN|-", m_davaci.group(1), flags=re.I)[0].strip().strip(".-")
+        cand_a = re.split(r"VEKİLİ|TC|VKN|-", m_davaci.group(1), flags=re.I)[0].strip().strip(".-")
+        if cand_a.lower() not in ["davaciadsoyad", "tarafadisoyadi", "davaci", "adsoyad", ""]:
+            data["alacakli"] = cand_a
 
-    m_davali = re.search(r"DAVALI\s*[:\s]+([^\n\r]+)", text, re.I)
+    m_davali = re.search(r"(?:^|\n)\s*DAVALI\s*[:\t ]*([^\r\n]+)", text, re.I)
     if m_davali:
-        data["borclu"] = re.split(r"VEKİLİ|TC|VKN|-", m_davali.group(1), flags=re.I)[0].strip().strip(".-")
+        cand_b = re.split(r"VEKİLİ|TC|VKN|-", m_davali.group(1), flags=re.I)[0].strip().strip(".-")
+        if cand_b.lower() not in ["tarafadisoyadi", "davali", "adsoyad", ""]:
+            data["borclu"] = cand_b
 
-    m_kvekil = re.search(r"(?:DAVALI\s*VEKİLİ|VEKİLİ)\s*[:\s]+(Av\.[^\n\r]+)", text, re.I)
+    m_kvekil = re.search(r"(?:DAVALI\s*VEKİLİ|VEKİLİ)\s*[:\t ]*(Av\.[^\r\n]+)", text, re.I)
     if m_kvekil:
         data["karsi_vekil"] = m_kvekil.group(1).strip().strip(".-")
 
-    # 6. Dava Değeri (Müddeabih)
-    m_deg = re.search(r"(?:DAVA\s*DEĞERİ|MÜDDEABİH|TALEP\s*SONUCU)\s*[:\s]+([0-9.,]+)", text, re.I)
+    # 6. Dava Değeri (Müddeabih / Dava Esas Değeri)
+    m_deg = re.search(r"(?:DAVA\s*(?:ESAS\s*)?DEĞER[İI]|MÜDDEAB[İI]H|TALEP\s*SONUCU)\s*[:\t ]*([0-9.,]+)", text, re.I)
     if m_deg:
         data["dava_degeri"] = parse_tr_float(m_deg.group(1))
 
     # 7. İlk Duruşma Tarihi ve Saati
-    m_dur = re.search(r"(?:duruşma(?:nın)?|ön\s*inceleme)\s*(?:günü|tarihi)?\s*(?:olarak\s*)?[:\s]*(\d{2}[./]\d{2}[./]\d{4})", text, re.I)
+    m_dur = re.search(r"(?:duruşma(?:nın)?|ön\s*inceleme)\s*(?:günü|tarihi)?\s*(?:olarak\s*)?[:\t ]*(\d{2}[./]\d{2}[./]\d{4})", text, re.I)
     if m_dur:
         raw_dur = m_dur.group(1).replace("/", ".")
         try:
@@ -269,6 +332,103 @@ def analyze_tensip_or_tevzi_text(text):
         if len(saat_txt) == 4:
             saat_txt = "0" + saat_txt
         data["durusma_saati"] = saat_txt
+
+    # 8. İcra Dosya Bilgileri (Tevzi formundan)
+    m_icra = re.search(r"İCRA\s*DOSYA\s*(?:BİLGİLERİ)?\s*[:\t ]*([^\r\n]+)", text, re.I)
+    if m_icra:
+        ic_txt = m_icra.group(1).strip()
+        m_ic_no = re.search(r"(\d{4}\s*/\s*\d+)", ic_txt)
+        if m_ic_no:
+            data["bagli_icra_no"] = m_ic_no.group(1).replace(" ", "")
+
+    return data
+
+
+def analyze_tensip_or_tevzi_file(file_name, file_bytes):
+    """
+    Yüklenen dosyanın türüne göre (UDF veya PDF/TXT) en yüksek doğrulukla
+    mahkeme, esas, taraflar ve dava bilgilerini analiz eder.
+    UDF dosyalarında XML etiketlerinden doğrudan yararlanarak 100% kesinlik sağlar.
+    """
+    raw_text = extract_text_from_uploaded_file(file_name, file_bytes)
+    data = analyze_tensip_or_tevzi_text(raw_text)
+
+    # UDF ise doğrudan XML etiketlerini de tara ve boş/hatalı kalan alanları tamamla
+    lower_name = file_name.lower()
+    if lower_name.endswith(".udf"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as zf:
+                if 'content.xml' in zf.namelist():
+                    xml_data = zf.read('content.xml')
+                    decoded_xml = None
+                    for enc in ['utf-8', 'windows-1254', 'iso-8859-9']:
+                        try:
+                            decoded_xml = xml_data.decode(enc)
+                            break
+                        except Exception:
+                            pass
+                    if not decoded_xml:
+                        decoded_xml = xml_data.decode('utf-8', errors='ignore')
+
+                    root = ET.fromstring(decoded_xml)
+                    tag_map = {}
+                    for elem in root.iter():
+                        if elem.text and elem.text.strip():
+                            tag_map.setdefault(elem.tag, []).append(elem.text.strip())
+
+                    # Mahkeme Adı
+                    if tag_map.get("ilIlceMahkemeAdi"):
+                        raw_m = tag_map["ilIlceMahkemeAdi"][0]
+                        clean_m = re.sub(r"^[\s\(\)\[\]\{\}\d\.\,\:\-]+", "", raw_m).strip()
+                        if clean_m:
+                            data["mahkeme_adi"] = clean_m
+
+                    # Esas No
+                    if tag_map.get("kayitNo"):
+                        kno = tag_map["kayitNo"][0].replace(" ", "").strip()
+                        if kno:
+                            data["dosya_no"] = kno if (kno.endswith("E.") or kno.endswith("ESAS")) else f"{kno} E."
+
+                    # Dava Türü
+                    if tag_map.get("davaTuru"):
+                        data["dava_turu"] = tag_map["davaTuru"][0].strip()
+
+                    # Davacı
+                    if tag_map.get("davaciAdSoyad"):
+                        data["alacakli"] = tag_map["davaciAdSoyad"][0].strip()
+
+                    # Taraflar (Davacı / Davalı)
+                    t_roller = tag_map.get("taraf", [])
+                    t_adlar = tag_map.get("tarafAdiSoyadi", [])
+                    for r, a in zip(t_roller, t_adlar):
+                        r_low = r.lower()
+                        if "davacı" in r_low or "davaci" in r_low:
+                            data["alacakli"] = a.strip()
+                        elif "davalı" in r_low or "davali" in r_low:
+                            data["borclu"] = a.strip()
+
+                    # Dava Değeri (Müddeabih)
+                    if tag_map.get("davaEsasDegeri"):
+                        data["dava_degeri"] = parse_tr_float(tag_map["davaEsasDegeri"][0])
+
+                    # Açılış Tarihi
+                    if tag_map.get("acilisTarihi"):
+                        m_ac = re.search(r"(\d{2}[./]\d{2}[./]\d{4})", tag_map["acilisTarihi"][0])
+                        if m_ac:
+                            try:
+                                data["dava_tarihi"] = datetime.strptime(m_ac.group(1).replace("/", "."), "%d.%m.%Y").strftime("%Y-%m-%d")
+                            except Exception:
+                                pass
+
+                    # İcra Dosyası Bilgileri
+                    if tag_map.get("icraDosyasi"):
+                        m_ic = re.search(r"(\d{4}\s*/\s*\d+)", tag_map["icraDosyasi"][0])
+                        if m_ic:
+                            data["bagli_icra_no"] = m_ic.group(1).replace(" ", "")
+                    if tag_map.get("icraMudurlugu"):
+                        data["bagli_icra_daire"] = tag_map["icraMudurlugu"][0].strip()
+        except Exception:
+            pass
 
     return data
 
@@ -300,9 +460,12 @@ def analyze_karar_text(text):
         return data
 
     # 1. Mahkeme, Esas, Karar No
-    m_mahk = re.search(r"(?:T\.C\.\s*)?([A-ZÇĞİÖŞÜ\s0-9\.\-]+(?:MAHKEMESİ|HAKİMLİĞİ))", text, re.I)
+    m_mahk = re.search(r"(?:T\.C\.\s*)?([^\r\n]*?(?:MAHKEMES[İI]|HAK[İI]ML[İI]Ğ[İI]))", text, re.I)
     if m_mahk:
-        data["mahkeme_adi"] = m_mahk.group(1).strip()
+        raw_m = m_mahk.group(1).strip()
+        clean_m = re.sub(r"^[\s\(\)\[\]\{\}\d\.\,\:\-]+", "", raw_m).strip()
+        if clean_m:
+            data["mahkeme_adi"] = clean_m
 
     m_esas = re.search(r"ESAS\s*NO\s*[:\s]+(\d{4}\s*/\s*\d+)", text, re.I)
     if m_esas:

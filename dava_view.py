@@ -351,12 +351,14 @@ def render_dava_modulu(conn, cursor, theme_vars):
         parsed_data = {}
         if uploaded_belge is not None:
             file_bytes = uploaded_belge.read()
-            raw_text = dava_engine.extract_text_from_uploaded_file(uploaded_belge.name, file_bytes)
-            if raw_text:
-                parsed_data = dava_engine.analyze_tensip_or_tevzi_text(raw_text)
-                st.success(f"✨ **Belge Başarıyla Okundu!** Mahkeme ({parsed_data.get('mahkeme_adi')}) ve Esas ({parsed_data.get('dosya_no')}) otomatik tespit edildi.")
+            parsed_data = dava_engine.analyze_tensip_or_tevzi_file(uploaded_belge.name, file_bytes)
+            if parsed_data.get("mahkeme_adi") or parsed_data.get("dosya_no") or parsed_data.get("alacakli"):
+                m_info = f"Mahkeme: **{parsed_data.get('mahkeme_adi')}**" if parsed_data.get('mahkeme_adi') else ""
+                e_info = f"Esas: **{parsed_data.get('dosya_no')}**" if parsed_data.get('dosya_no') else ""
+                d_info = f"Müvekkil: **{parsed_data.get('alacakli')}**" if parsed_data.get('alacakli') else ""
+                st.success(f"✨ **Belge Başarıyla Okundu!** {m_info} | {e_info} | {d_info}")
             else:
-                st.warning("Belge metni çıkarılamadı. Lütfen form alanlarını elle doldurunuz.")
+                st.warning("Belge metni çıkarılamadı veya boş. Lütfen form alanlarını elle doldurunuz.")
 
         # İcra dosyaları listesini hazırla (Bağlantı için)
         cursor.execute("SELECT id, il, icra_dairesi, dosya_no, borclu FROM dosyalar ORDER BY id DESC")
@@ -364,6 +366,18 @@ def render_dava_modulu(conn, cursor, theme_vars):
         icra_dict = {"-- Bağlı İcra Dosyası Yok (Müstakil Dava) --": None}
         for ic_id, ic_il, ic_d, ic_no, ic_b in icra_listesi:
             icra_dict[f"[{ic_id}] {ic_il} {ic_d} {ic_no} | {ic_b}"] = ic_id
+
+        # Otomatik İcra Dosyası Eşleştirme (Tevzi Formundan gelen icra dosya numarasına göre)
+        auto_icra_idx = 0
+        bagli_ic_no = parsed_data.get("bagli_icra_no", "")
+        if bagli_ic_no:
+            for idx, key in enumerate(icra_dict.keys()):
+                if bagli_ic_no in key:
+                    auto_icra_idx = idx
+                    break
+
+        if auto_icra_idx > 0:
+            st.info(f"🔗 **Tevzi Formundaki İcra Dosyası Tespit Edildi:** Otomatik eşleştirildi ({list(icra_dict.keys())[auto_icra_idx]}).")
 
         with st.form("form_yeni_dava_kaydi"):
             f_c1, f_c2 = st.columns(2)
@@ -389,7 +403,10 @@ def render_dava_modulu(conn, cursor, theme_vars):
                 cur_dtur = parsed_data.get("dava_turu", "İtirazın İptali (İİK m. 67)")
                 d_idx = 0
                 for idx, dt in enumerate(dava_turleri):
-                    if dt.split()[0].lower() in cur_dtur.lower():
+                    if "itirazın iptali" in cur_dtur.lower() and "itirazın iptali" in dt.lower():
+                        d_idx = idx
+                        break
+                    elif dt.split()[0].lower() in cur_dtur.lower():
                         d_idx = idx
                         break
                 i_tur = st.selectbox("Dava Türü", dava_turleri, index=d_idx)
@@ -414,7 +431,7 @@ def render_dava_modulu(conn, cursor, theme_vars):
                 def_kvekil = parsed_data.get("karsi_vekil", "")
                 i_kvekil = st.text_input("Karşı Taraf Vekili", value=def_kvekil, placeholder="Örn: Av. Ahmet Yılmaz")
 
-                i_bagli_icra = st.selectbox("🔗 Bağlı İcra Dosyası Seç (Varsa)", list(icra_dict.keys()))
+                i_bagli_icra = st.selectbox("🔗 Bağlı İcra Dosyası Seç (Varsa)", list(icra_dict.keys()), index=auto_icra_idx)
 
                 # Duruşma Bilgisi
                 def_dur_t = parsed_data.get("durusma_tarihi", "")
