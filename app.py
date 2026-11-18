@@ -2434,16 +2434,36 @@ if menu == "Dosya Arama & Çalışma Masası":
 # 9. MODÜL 2: MÜVEKKİL CARİ PORTFÖY RAPORU
 # -------------------------------------------------------------
 elif menu == "Müvekkil Portföy & Raporlama":
-    st.markdown(f"<h2 style='color:{accent_green};'>🏢 Müvekkil Cari Portföy & Konsolide Özet Rapor</h2>", unsafe_allow_html=True)
-    st.caption("Seçilen müvekkilin tüm dosyalarını tek sayfada; toplam alacak, toplam tahsilat ve son notlar dahil olacak şekilde özetleyin.")
+    st.markdown(f"<h2 style='color:{accent_green};'>🏢 Cari Portföy & Konsolide Hesap Raporlama Masası</h2>", unsafe_allow_html=True)
+    st.caption("Müvekkilinizin veya herhangi bir Borçlunun tüm icra dosyalarını; canlı mali hesap cetveli, toplam borç ve alacak detaylarıyla tek sayfada raporlayın.")
 
     alacaklilar = pd.read_sql_query("SELECT DISTINCT alacakli FROM dosyalar WHERE alacakli IS NOT NULL AND alacakli != '' ORDER BY alacakli", conn)['alacakli'].tolist()
+    borclular = pd.read_sql_query("SELECT DISTINCT borclu FROM dosyalar WHERE borclu IS NOT NULL AND borclu != '' ORDER BY borclu", conn)['borclu'].tolist()
 
-    if not alacaklilar:
+    if not alacaklilar and not borclular:
         st.info("Sistemde henüz kayıtlı bir dosya bulunmuyor.")
     else:
-        secilen_muvekkil = st.selectbox("Raporlanacak Müvekkil Cari Seçin", alacaklilar)
-        m_dosyalar = pd.read_sql_query("SELECT * FROM dosyalar WHERE alacakli = ? ORDER BY id DESC", conn, params=[secilen_muvekkil])
+        rep_hedef = st.radio(
+            "🎯 Raporlama Hedefi & Perspektifi Seçin:",
+            [
+                "🏢 Müvekkil Portföy Raporu (Alacaklı Cari Bazlı)",
+                "👤 Borçlu Hesap Bildirim & Konsolide Borç Raporu (Borçlu Cari Bazlı)"
+            ],
+            horizontal=True,
+            key="rep_hedef_radio"
+        )
+        is_borclu_modu = "Borçlu" in rep_hedef
+
+        if is_borclu_modu:
+            secilen_cari = st.selectbox("Raporlanacak Borçlu Cari Seçin", borclular, key="sel_borclu_cari")
+            m_dosyalar = pd.read_sql_query("SELECT * FROM dosyalar WHERE borclu = ? ORDER BY id DESC", conn, params=[secilen_cari])
+            cari_etiket = "Borçlu"
+        else:
+            secilen_cari = st.selectbox("Raporlanacak Müvekkil Cari Seçin", alacaklilar, key="sel_muvekkil_cari")
+            m_dosyalar = pd.read_sql_query("SELECT * FROM dosyalar WHERE alacakli = ? ORDER BY id DESC", conn, params=[secilen_cari])
+            cari_etiket = "Müvekkil"
+
+        secilen_muvekkil = secilen_cari # Geriye dönük uyumluluk
 
         if m_dosyalar.empty:
             m_ids = "(-1)"
@@ -2474,17 +2494,21 @@ elif menu == "Müvekkil Portföy & Raporlama":
         )
         fill_zebra = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
 
-        st.markdown(f"**{secilen_muvekkil}** cari kartına bağlı toplam **{len(m_dosyalar)}** adet icra dosyası tespit edildi.")
+        st.markdown(f"**{secilen_cari}** ({cari_etiket}) carisine bağlı toplam **{len(m_dosyalar)}** adet icra dosyası tespit edildi.")
         st.write("")
+        format_list = [
+            "📊 Format 1: Dosya Bazlı Portföy Durum Raporu",
+            "💰 Format 2: Müvekkil Tahsilat & Virman (Kasa) Cetveli",
+            "📈 Format 3: Alacak & Faiz Detaylı Portföy Raporu",
+            "📑 Format 4: Canlı Dosya Hesabı & Tüm Kalemler Dökümü (Borç Bildirimi)"
+        ]
+        def_fmt_idx = 3 if is_borclu_modu else 0
         secilen_format = st.radio(
             "📋 Görüntülenecek ve İndirilecek Rapor Formatı Seçin:",
-            [
-                "📊 Format 1: Dosya Bazlı Portföy Durum Raporu",
-                "💰 Format 2: Müvekkil Tahsilat & Virman (Kasa) Cetveli",
-                "📈 Format 3: Alacak & Faiz Detaylı Portföy Raporu"
-            ],
+            format_list,
+            index=def_fmt_idx,
             horizontal=True,
-            key=f"rep_fmt_selector_{secilen_muvekkil}"
+            key=f"rep_fmt_selector_{secilen_cari}_{is_borclu_modu}"
         )
 
         if secilen_format == "📊 Format 1: Dosya Bazlı Portföy Durum Raporu":
@@ -3533,6 +3557,397 @@ elif menu == "Müvekkil Portföy & Raporlama":
                 on_click="ignore",
                 key=f"btn_dl_faiz_detay_{secilen_muvekkil}"
             )
+
+        elif secilen_format == "📑 Format 4: Canlı Dosya Hesabı & Tüm Kalemler Dökümü (Borç Bildirimi)":
+            f4_satirlari = []
+            for _, d_row in m_dosyalar.iterrows():
+                d_id = int(d_row['id'])
+                t_df = m_t_grp.get(d_id, m_emp_t)
+                m_df = m_m_grp.get(d_id, m_emp_m)
+                n_df = m_n_grp.get(d_id, m_emp_n)
+                m_ak_df = m_ak_grp.get(d_id, m_emp_ak)
+
+                top_masraf = float(m_df['masraf_tutari'].sum()) if not m_df.empty else 0.0
+                top_iade = float(m_df['iade_tutari'].sum()) if not m_df.empty else 0.0
+                net_masraf = top_masraf - top_iade
+
+                res_raw = hesapla_kademeli_dosya_hesabi(
+                    d_row['ana_para'], d_row['faiz_orani'], d_row['takip_tarihi'], d_row['t_oncesi_faiz'], t_df,
+                    faiz_turu=d_row.get('faiz_turu', 'Özel Oran'),
+                    masraflar_df=m_df,
+                    alacak_kalemleri_df=m_ak_df
+                )
+                rem_p = res_raw[0]
+                rem_tot_i = res_raw[1]
+                tot_pay = res_raw[2]
+                mahsup_list = res_raw[3]
+                rem_pre_i = res_raw[4]
+                rem_post_i = res_raw[5]
+
+                cikis_bedeli = float(d_row['takip_cikisi'])
+                s_th_oran = float(d_row.get('tahsil_harci_orani', 9.10) if pd.notnull(d_row.get('tahsil_harci_orani')) else 9.10)
+                s_ch_oran = float(d_row.get('cezaevi_harci_orani', 2.00) if pd.notnull(d_row.get('cezaevi_harci_orani')) else 2.00)
+                tahsil_harci_tutar = round(cikis_bedeli * (s_th_oran / 100.0), 2)
+                cezaevi_harci_tutar = 0.0 if s_ch_oran == 0.0 else round(cikis_bedeli * (s_ch_oran / 100.0), 2)
+
+                is_infaz = bool(re.search(r"Kapatıldı|İnfaz|Kapalı", str(d_row.get('durum', '')), re.I))
+
+                if is_infaz:
+                    rem_p = 0.0
+                    rem_tot_i = 0.0
+                    rem_pre_i = 0.0
+                    rem_post_i = 0.0
+                    kalan_masraf = 0.0
+                    kalan_vekalet = 0.0
+                    kalan_th = 0.0
+                    kalan_ch = 0.0
+                    kalan_toplam_dosya_borcu = 0.0
+                else:
+                    consumed_in_items = sum(
+                        float(parse_tr_money(m_item.get("Masrafa Mahsup", "0"))) +
+                        float(parse_tr_money(m_item.get("Faize Mahsup", "0"))) +
+                        float(parse_tr_money(m_item.get("Ana Paraya Mahsup", "0")))
+                        for m_item in mahsup_list
+                    )
+                    leftover_pay = max(0.0, tot_pay - consumed_in_items)
+                    
+                    s_vekalet = float(d_row.get('vekalet_ucreti', 0.0))
+                    kalan_vekalet = max(0.0, s_vekalet - leftover_pay)
+                    leftover_pay = max(0.0, leftover_pay - s_vekalet)
+                    
+                    kalan_th = max(0.0, tahsil_harci_tutar - leftover_pay)
+                    leftover_pay = max(0.0, leftover_pay - tahsil_harci_tutar)
+                    
+                    kalan_ch = max(0.0, cezaevi_harci_tutar - leftover_pay)
+                    kalan_masraf = net_masraf
+                    
+                    kalan_toplam_dosya_borcu = rem_p + rem_tot_i + kalan_vekalet + net_masraf + kalan_th + kalan_ch
+                    if kalan_toplam_dosya_borcu <= 0.05:
+                        kalan_toplam_dosya_borcu = 0.0
+
+                temiz_asl = hesapla_temiz_asil_alacak(d_row, m_ak_df)
+                s_vekalet_raw = float(d_row.get('vekalet_ucreti', 0.0))
+
+                son_not_str = ""
+                if not n_df.empty:
+                    r_not = n_df.iloc[0]
+                    n_dt_str = str(r_not['tarih'])[:10]
+                    try:
+                        n_dt_fmt = datetime.strptime(n_dt_str, "%Y-%m-%d").strftime("%d.%m.%Y")
+                    except Exception:
+                        n_dt_fmt = n_dt_str
+                    son_not_str = f"[{n_dt_fmt}] {str(r_not['not_icerik'])}"
+
+                statu_str = str(d_row.get('durum', 'Derdest'))
+                if d_row.get('itiraz_edildi') == 1:
+                    statu_str = "🚨 İtiraz Edildi"
+
+                raw_tarih = str(d_row.get('takip_tarihi', ''))[:10]
+                try:
+                    acilis_tarihi_fmt = datetime.strptime(raw_tarih, "%Y-%m-%d").strftime("%d.%m.%Y")
+                except Exception:
+                    acilis_tarihi_fmt = raw_tarih
+
+                f4_satirlari.append({
+                    "dosya_id": d_id,
+                    "İcra Dairesi / No": f"{d_row.get('il', '')} {d_row.get('icra_dairesi', '')} {d_row.get('dosya_no', '')}".strip(),
+                    "Alacaklı": str(d_row.get('alacakli', '')),
+                    "Borçlu": str(d_row.get('borclu', '')),
+                    "Takip Tarihi": acilis_tarihi_fmt,
+                    "Başlangıç Asıl Alacak": temiz_asl,
+                    "Takip Öncesi Faiz": float(d_row.get('t_oncesi_faiz', 0.0)),
+                    "Takip Çıkışı": cikis_bedeli,
+                    "Takip Sonrası Faiz": rem_post_i,
+                    "Toplam İşlemiş Faiz": rem_tot_i,
+                    "İcra Vekalet Ücreti": s_vekalet_raw,
+                    "Net Masraf": net_masraf,
+                    "Tahsil Harcı": tahsil_harci_tutar,
+                    "Cezaevi Harcı": cezaevi_harci_tutar,
+                    "Toplam Tahsilat (-)": tot_pay,
+                    "Kalan Asıl Alacak": rem_p,
+                    "Kalan Faiz": rem_tot_i,
+                    "Kalan Vekalet": kalan_vekalet,
+                    "Kalan Harçlar": round(kalan_th + kalan_ch, 2),
+                    "GÜNCEL TOPLAM BORÇ": kalan_toplam_dosya_borcu,
+                    "Dosya Statüsü": statu_str,
+                    "Rapor / Dosya Notu": son_not_str
+                })
+
+            df_f4 = pd.DataFrame(f4_satirlari)
+
+            top_f4_asl = sum(r["Başlangıç Asıl Alacak"] for r in f4_satirlari)
+            top_f4_faiz = sum(r["Toplam İşlemiş Faiz"] for r in f4_satirlari)
+            top_f4_vekalet = sum(r["İcra Vekalet Ücreti"] for r in f4_satirlari)
+            top_f4_masraf = sum(r["Net Masraf"] for r in f4_satirlari)
+            top_f4_harc = sum(r["Tahsil Harcı"] + r["Cezaevi Harcı"] for r in f4_satirlari)
+            top_f4_tahsilat = sum(r["Toplam Tahsilat (-)"] for r in f4_satirlari)
+            top_f4_kalan_borc = sum(r["GÜNCEL TOPLAM BORÇ"] for r in f4_satirlari)
+
+            # Özet KPI Kartları
+            kpi_c1, kpi_c2, kpi_c3, kpi_c4 = st.columns([1, 1, 1, 1.25])
+            with kpi_c1:
+                st.metric("📁 Toplam Dosya", f"{len(f4_satirlari)} Adet")
+                st.metric("💵 Başlangıç Asıl Alacak", format_tr_money(top_f4_asl))
+            with kpi_c2:
+                st.metric("📈 Toplam İşlemiş Faiz", format_tr_money(top_f4_faiz))
+                st.metric("⚖️ İcra Vekalet Ücreti", format_tr_money(top_f4_vekalet))
+            with kpi_c3:
+                st.metric("🏷️ Net Masraf & Harçlar", format_tr_money(top_f4_masraf + top_f4_harc))
+                st.metric("🟢 Toplam Tahsil Edilen (-)", format_tr_money(top_f4_tahsilat))
+            with kpi_c4:
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%); border: 2px solid #38BDF8; border-radius: 10px; padding: 14px; text-align: center; height: 100%;">
+                    <div style="font-size: 11px; font-weight: 700; color: #38BDF8; text-transform: uppercase;">🔥 KONSOLİDE GÜNCEL BORÇ</div>
+                    <div style="font-size: 24px; font-weight: 800; color: #FFFFFF; margin-top: 6px;">{format_tr_money(top_f4_kalan_borc)}</div>
+                    <div style="font-size: 11px; color: #94A3B8; margin-top: 4px;">Ödenmesi Gereken Net Bakiye</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.write("")
+            f4_editor_key = f"canli_f4_editor_{secilen_cari}_{is_borclu_modu}"
+            edited_f4 = st.data_editor(
+                df_f4,
+                key=f4_editor_key,
+                use_container_width=True,
+                num_rows="dynamic",
+                column_config={
+                    "dosya_id": None,
+                    "İcra Dairesi / No": st.column_config.TextColumn(width="medium"),
+                    "Alacaklı": st.column_config.TextColumn(width="medium"),
+                    "Borçlu": st.column_config.TextColumn(width="medium"),
+                    "Takip Tarihi": st.column_config.TextColumn(width="small"),
+                    "Başlangıç Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Takip Öncesi Faiz": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Takip Çıkışı": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Takip Sonrası Faiz": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Toplam İşlemiş Faiz": st.column_config.NumberColumn(format="%.2f TL"),
+                    "İcra Vekalet Ücreti": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Net Masraf": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Tahsil Harcı": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Cezaevi Harcı": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Toplam Tahsilat (-)": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Kalan Asıl Alacak": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Kalan Faiz": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Kalan Vekalet": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Kalan Harçlar": st.column_config.NumberColumn(format="%.2f TL"),
+                    "GÜNCEL TOPLAM BORÇ": st.column_config.NumberColumn(format="%.2f TL"),
+                    "Dosya Statüsü": st.column_config.TextColumn(width="small"),
+                    "Rapor / Dosya Notu": st.column_config.TextColumn(width="large")
+                }
+            )
+
+            col_act1, col_act2 = st.columns([1.5, 2.5])
+            with col_act1:
+                if st.button("💾 Düzenlenen Notları Dosya Geçmişine Kalıcı Kaydet", key=f"btn_save_notes_f4_{secilen_cari}"):
+                    kaydedilen = 0
+                    for _, r_item in edited_f4.iterrows():
+                        d_id_val = r_item.get("dosya_id")
+                        cur_not_txt = str(r_item.get("Rapor / Dosya Notu", "")).strip()
+                        if d_id_val and cur_not_txt:
+                            cursor.execute("SELECT not_icerik FROM dosya_notlari WHERE dosya_id = ? ORDER BY id DESC LIMIT 1", (int(d_id_val),))
+                            check_cur = cursor.fetchone()
+                            if not check_cur or check_cur[0] != cur_not_txt:
+                                cursor.execute("INSERT INTO dosya_notlari (dosya_id, tarih, not_icerik) VALUES (?, ?, ?)", (int(d_id_val), str(date.today()), cur_not_txt))
+                                kaydedilen += 1
+                    conn.commit()
+                    invalidate_caches()
+                    st.success(f"✅ {kaydedilen} dosyanın rapor notu başarıyla kaydedildi!")
+                    st.rerun()
+
+            # EXCEL RAPORU OLUŞTURMA (openpyxl)
+            wb_f4 = openpyxl.Workbook()
+            ws_f4 = wb_f4.active
+            ws_f4.title = "Canlı Hesap Borç Cetveli"
+            ws_f4.views.sheetView[0].showGridLines = True
+
+            fill_f4_header = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+            fill_f4_sub = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+            fill_f4_total = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+
+            # Başlık Şeridi
+            ws_f4.merge_cells("A1:U1")
+            ws_f4["A1"] = f"JUS LEGAL HUKUK BÜROSU | {secilen_cari.upper()} KONSOLİDE İCRA DOSYALARI HESAP CETVELİ VE CANLI BORÇ BİLDİRİMİ"
+            ws_f4["A1"].font = font_title
+            ws_f4["A1"].fill = fill_f4_header
+            ws_f4["A1"].alignment = Alignment(horizontal="center", vertical="center")
+            ws_f4.row_dimensions[1].height = 36
+
+            # Özet Bilgi Şeridi
+            ws_f4.merge_cells("A2:U2")
+            ws_f4["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%d.%m.%Y')} | Muhatap {cari_etiket}: {secilen_cari} | Toplam Dosya: {len(edited_f4)} Adet | Başlangıç Asıl Alacak: {format_tr_money(top_f4_asl)} | Konsolide Güncel Toplam Borç: {format_tr_money(top_f4_kalan_borc)}"
+            ws_f4["A2"].font = Font(name="Arial", size=9, italic=True, color="334155")
+            ws_f4["A2"].alignment = Alignment(horizontal="center", vertical="center")
+            ws_f4.row_dimensions[2].height = 22
+
+            headers_f4 = [
+                "İcra Dairesi / No",
+                "Alacaklı (Müvekkil)",
+                "Borçlu",
+                "Takip Tarihi",
+                "Başlangıç Asıl Alacak",
+                "Takip Öncesi Faiz",
+                "Takip Çıkışı",
+                "Takip Sonrası Faiz",
+                "Toplam İşlemiş Faiz",
+                "İcra Vekalet Ücreti",
+                "Net Masraf",
+                "Tahsil Harcı",
+                "Cezaevi Harcı",
+                "Toplam Tahsilat (-)",
+                "Kalan Asıl Alacak",
+                "Kalan Faiz",
+                "Kalan Vekalet",
+                "Kalan Harçlar",
+                "GÜNCEL TOPLAM BORÇ",
+                "Dosya Statüsü",
+                "Rapor / Dosya Notu"
+            ]
+
+            for c_i, h_txt in enumerate(headers_f4, start=1):
+                c = ws_f4.cell(row=3, column=c_i, value=h_txt)
+                c.fill = fill_f4_sub
+                c.font = font_sub
+                c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                c.border = thin_border
+            ws_f4.row_dimensions[3].height = 30
+
+            row_f4_idx = 4
+            for _, r_f4 in edited_f4.iterrows():
+                f4_vals = [
+                    str(r_f4["İcra Dairesi / No"]),
+                    str(r_f4.get("Alacaklı", "-")),
+                    str(r_f4.get("Borçlu", "-")),
+                    str(r_f4.get("Takip Tarihi", "-")),
+                    float(r_f4.get("Başlangıç Asıl Alacak", 0.0)),
+                    float(r_f4.get("Takip Öncesi Faiz", 0.0)),
+                    float(r_f4.get("Takip Çıkışı", 0.0)),
+                    float(r_f4.get("Takip Sonrası Faiz", 0.0)),
+                    float(r_f4.get("Toplam İşlemiş Faiz", 0.0)),
+                    float(r_f4.get("İcra Vekalet Ücreti", 0.0)),
+                    float(r_f4.get("Net Masraf", 0.0)),
+                    float(r_f4.get("Tahsil Harcı", 0.0)),
+                    float(r_f4.get("Cezaevi Harcı", 0.0)),
+                    float(r_f4.get("Toplam Tahsilat (-)", 0.0)),
+                    float(r_f4.get("Kalan Asıl Alacak", 0.0)),
+                    float(r_f4.get("Kalan Faiz", 0.0)),
+                    float(r_f4.get("Kalan Vekalet", 0.0)),
+                    float(r_f4.get("Kalan Harçlar", 0.0)),
+                    float(r_f4.get("GÜNCEL TOPLAM BORÇ", 0.0)),
+                    str(r_f4.get("Dosya Statüsü", "Derdest")),
+                    str(r_f4.get("Rapor / Dosya Notu", ""))
+                ]
+
+                is_zebra = (row_f4_idx % 2 == 1)
+                for col_idx, val in enumerate(f4_vals, start=1):
+                    cell = ws_f4.cell(row=row_f4_idx, column=col_idx, value=val)
+                    cell.font = font_reg
+                    cell.border = thin_border
+                    if is_zebra:
+                        cell.fill = fill_zebra
+
+                    # Sayısal hücreler para formatında
+                    if col_idx in [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]:
+                        cell.number_format = '#,##0.00 "TL"'
+                        cell.alignment = Alignment(horizontal="right", vertical="center")
+                    elif col_idx in [1, 4, 20]:
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                    else:
+                        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=(col_idx == 21))
+
+                    # Güncel toplam borç sütununu özel vurgula (Col 19)
+                    if col_idx == 19:
+                        cell.font = Font(name="Arial", size=10, bold=True, color="991B1B")
+
+                ws_f4.row_dimensions[row_f4_idx].height = 24
+                row_f4_idx += 1
+
+            # GENEL TOPLAM SATIRI
+            ws_f4.cell(row=row_f4_idx, column=1, value="GENEL KONSOLİDE TOPLAM").font = font_total
+            ws_f4.merge_cells(start_row=row_f4_idx, start_column=1, end_row=row_f4_idx, end_column=4)
+
+            f4_totals_map = {
+                5: top_f4_asl,
+                6: sum(r["Takip Öncesi Faiz"] for r in f4_satirlari),
+                7: sum(r["Takip Çıkışı"] for r in f4_satirlari),
+                8: sum(r["Takip Sonrası Faiz"] for r in f4_satirlari),
+                9: top_f4_faiz,
+                10: top_f4_vekalet,
+                11: top_f4_masraf,
+                12: sum(r["Tahsil Harcı"] for r in f4_satirlari),
+                13: sum(r["Cezaevi Harcı"] for r in f4_satirlari),
+                14: top_f4_tahsilat,
+                15: sum(r["Kalan Asıl Alacak"] for r in f4_satirlari),
+                16: sum(r["Kalan Faiz"] for r in f4_satirlari),
+                17: sum(r["Kalan Vekalet"] for r in f4_satirlari),
+                18: sum(r["Kalan Harçlar"] for r in f4_satirlari),
+                19: top_f4_kalan_borc
+            }
+
+            for col_idx in range(1, 22):
+                c_tot = ws_f4.cell(row=row_f4_idx, column=col_idx)
+                c_tot.fill = fill_f4_total
+                c_tot.font = font_total
+                c_tot.border = thin_border
+                if col_idx in f4_totals_map:
+                    c_tot.value = f4_totals_map[col_idx]
+                    c_tot.number_format = '#,##0.00 "TL"'
+                    c_tot.alignment = Alignment(horizontal="right", vertical="center")
+            ws_f4.row_dimensions[row_f4_idx].height = 28
+
+            col_widths = {
+                "A": 26, "B": 24, "C": 26, "D": 14, "E": 20, "F": 18, "G": 20, "H": 20, "I": 20,
+                "J": 18, "K": 16, "L": 16, "M": 16, "N": 20, "O": 20, "P": 18, "Q": 18, "R": 18,
+                "S": 24, "T": 16, "U": 45
+            }
+            for col_letter, width in col_widths.items():
+                ws_f4.column_dimensions[col_letter].width = width
+
+            buf_f4 = io.BytesIO()
+            wb_f4.save(buf_f4)
+            excel_bytes_f4 = buf_f4.getvalue()
+
+            st.write("")
+            st.download_button(
+                label=f"📥 Format 4: {secilen_cari} Canlı Hesap & Tüm Kalemler Borç Döküm Cetvelini İndir (.xlsx)",
+                data=excel_bytes_f4,
+                file_name=make_safe_filename(secilen_cari, "Canli_Hesap_Borc_Dökümü"),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True,
+                on_click="ignore",
+                key=f"btn_dl_f4_canli_{secilen_cari}"
+            )
+
+            # BORÇLUYA İLETİLECEK WHATSAPP / E-POSTA MUTABAKAT METNİ
+            with st.expander("📲 Borçluya İletilecek Bilgilendirme & Mutabakat Metni (WhatsApp / SMS / E-posta)", expanded=False):
+                dosya_maddeleri = []
+                for idx, r_row in enumerate(f4_satirlari, 1):
+                    dosya_maddeleri.append(
+                        f"📁 {idx}. {r_row['İcra Dairesi / No']}\n"
+                        f"   • Alacaklı: {r_row['Alacaklı']}\n"
+                        f"   • Kalan Asıl Alacak: {format_tr_money(r_row['Kalan Asıl Alacak'])}\n"
+                        f"   • Kalan İşlemiş Faiz: {format_tr_money(r_row['Kalan Faiz'])}\n"
+                        f"   • Vekalet, Masraf & Harçlar: {format_tr_money(r_row['Kalan Vekalet'] + r_row['Kalan Harçlar'] + r_row['Net Masraf'])}\n"
+                        f"   • Güncel Dosya Bakiyesi: {format_tr_money(r_row['GÜNCEL TOPLAM BORÇ'])}"
+                    )
+
+                maddeler_metin = "\n\n".join(dosya_maddeleri)
+                whatsapp_taslagi = f"""Sayın Yetkili / Sayın {secilen_cari},
+
+Hukuk Büromuz nezdinde aleyhinize yürütülmekte olan {len(f4_satirlari)} adet icra takip dosyası bulunmaktadır.
+{datetime.now().strftime('%d.%m.%Y')} tarihi itibarıyla dosya hesap dökümü ve güncel borç bakiyeleri aşağıda bilginize sunulmuştur:
+
+{maddeler_metin}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💰 KONSOLİDE TOPLAM BORÇ TUTARI: {format_tr_money(top_f4_kalan_borc)}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+İcra masraf ve faizlerinin her geçen gün artmaması ve haciz işlemlerine mahal verilmemesi adına dosya borcunuzu kapatmak veya taksitlendirme protokolü oluşturmak üzere büromuzla iletişime geçmenizi rica ederiz.
+
+Saygılarımızla,
+Jus Legal Hukuk Bürosu"""
+                st.text_area("📋 Kopyalanabilir Bilgilendirme Metni:", value=whatsapp_taslagi, height=280)
 
 
 
