@@ -1,14 +1,14 @@
-name: Supabase Keep-Alive
+name: Keep-Alive (Streamlit & Supabase)
 
 on:
   schedule:
-    # Runs every 3 days at 06:00 UTC (Supabase pauses after 7 days of inactivity)
-    - cron: '0 6 */3 * *'
+    # Runs every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
+    - cron: '0 */6 * * *'
   workflow_dispatch: # Allows manual trigger from GitHub Actions tab
 
 jobs:
   ping:
-    name: Ping Supabase Database
+    name: Ping Streamlit & Supabase
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -26,5 +26,6 @@ jobs:
       - name: Run Keep-Alive Ping
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STREAMLIT_URL: https://tahsilatpro.streamlit.app
         run: |
           python scripts/keep_alive.py
